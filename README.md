@@ -1,5 +1,46 @@
 # Coffee Grind Fineness Dataset
 
+## Contributing
+
+> [!CAUTION]
+> **NO DIRECT PUSHES TO `main` — EVER.**
+> **NO SELF-MERGES — ALWAYS GET A REVIEW FIRST.(@vladysl4v)**
+> **NO MERGE WITHOUT TEAM DISCUSSION.**
+
+- PRs must be focused and reasonably scoped — one feature or fix per PR.
+- **Keep branches short-lived** — merge back to `main` (or your epic) as soon as the work is stable. Long-lived feature branches cause painful merges.
+
+> **Note:** The first 3 commits to `main` were initial project scaffolding and are the only exception to the rules above.
+
+### Branch naming
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| New feature | `feature/<description>` | `feature/resnet-backbone` |
+| Chore / tooling | `chore/<description>` | `chore/update-dependencies` |
+| Bug fix | `fix/<description>` | `fix/csv-decimal-parsing` |
+| Experiment | `experiment/<description>` | `experiment/augmentation-tuning` |
+| Long-running epic | `epic/<description>` | `epic/model-a-exploration` |
+
+Keep branches short-lived — merge back to `main` (or your epic) as soon as the work is stable.
+
+### Workflow
+
+1. Branch off `main`, do your work, push your branch.
+2. Open a Pull Request and assign **@vladysl4v** as reviewer *(temporary — review ownership may be revisited as the project matures, but kept this way for now to maintain a consistent process)*.
+3. Wait for approval — **do not merge your own PR**.
+4. Reviewer merges into `main` after approval.
+
+### Epics — long-running work
+
+If your work will diverge significantly for an extended period (e.g. a model exploration running in parallel with the rest of the team), create an `epic/<description>` branch and treat it as your local `main`:
+
+- Working **with others**: branch off the epic with `feature/`, `fix/` etc. and open PRs into it — same review rules apply.
+- Working **alone**: you may commit directly to the epic branch.
+
+When the epic is complete, open a single PR from the epic branch into `main`.
+
+
 ## Setup
 
 This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
