@@ -25,6 +25,8 @@ uv add torch torchvision
 
 `data/labels/labels_train2.csv` — 648 labeled images, semicolon-delimited (`Sample;Fineness`).
 
+Place the raw images in `data/images/` — the directory is tracked in git (via `.gitkeep`) but its contents are not.
+
 ## Train / Val / Test Split
 
 **Script:** `src/split_labels.py`  

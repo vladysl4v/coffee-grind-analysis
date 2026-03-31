@@ -84,6 +84,11 @@ class CoffeeDataset(Dataset):
 
     def __getitem__(self, idx: int):
         img_path = _IMAGES_DIR / self.samples[idx]
+        if not img_path.exists():
+            raise FileNotFoundError(
+                f"Image not found: {img_path}\n"
+                f"Place all images in {_IMAGES_DIR}"
+            )
         image = Image.open(img_path).convert("RGB")
 
         if self.transform is not None:
