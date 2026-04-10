@@ -5,10 +5,11 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# Data (needed to be in a work environment)
-IMG_DIR = Path("images_train_(1080x1080)_png")
-LABELS_PATH = Path("labels_train2.csv")
-OUT_DIR = Path("analysis_output")
+# Data
+_ROOT = Path(__file__).parent.parent
+_IMG_DIR = _ROOT / "data" / "images"
+_LABELS_PATH = _ROOT / "data" / "labels" / "labels_train2.csv"
+_OUT_DIR = _ROOT / "data" / "analysis_output"
 
 # Limits
 SHARP_LIMIT = 70.0
@@ -35,14 +36,14 @@ def get_metrics(path):
 def main():
     # Folders
     folders = {
-        "good": OUT_DIR / "good",
-        "remove": OUT_DIR / "to_remove"
+        "good": _OUT_DIR / "good",
+        "remove": _OUT_DIR / "to_remove"
     }
     for f in folders.values():
         f.mkdir(parents=True, exist_ok=True)
 
     try:
-        df = pd.read_csv(LABELS_PATH, sep=';')
+        df = pd.read_csv(_LABELS_PATH, sep=';')
     except Exception as e:
         print(f"CSV error: {e}")
         return
@@ -52,7 +53,7 @@ def main():
 
     for _, row in df.iterrows():
         name = row['Sample']
-        f_path = IMG_DIR / name
+        f_path = _IMG_DIR / name
         val = row['Fineness']
 
         if not f_path.exists():
@@ -81,7 +82,7 @@ def main():
         })
 
     # Save report
-    pd.DataFrame(stats).to_csv(OUT_DIR / "report.csv", index=False)
+    pd.DataFrame(stats).to_csv(_OUT_DIR / "report.csv", index=False)
     print("Done. Report saved.")
 
 if __name__ == "__main__":
