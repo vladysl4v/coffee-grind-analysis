@@ -29,6 +29,7 @@ _CSV = {
     "train": _LABELS_DIR / "labels_train.csv",
     "val":   _LABELS_DIR / "labels_val.csv",
     "test":  _LABELS_DIR / "labels_test.csv",
+    "full": _LABELS_DIR / "labels_train2.csv"
 }
 
 # ImageNet normalisation — sensible default for pretrained backbones
@@ -138,3 +139,6 @@ def get_loaders(
         pin_memory=True,
     )
     return train_loader, val_loader, test_loader
+
+def get_full_dataset(transform=None):
+    return CoffeeDataset("full", transform=transform)
