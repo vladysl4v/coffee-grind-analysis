@@ -35,13 +35,13 @@ class SegmentCoffeeRegion:
         return Image.fromarray(masked.astype(np.uint8))
 
 _ROOT       = Path(__file__).parent.parent
-_IMAGES_DIR = _ROOT / "data" / "images"
+_IMAGES_DIR = _ROOT / "data" / "images" / "raw"
 _LABELS_DIR = _ROOT / "data" / "labels"
 
 _CSV = {
-    "train": _LABELS_DIR / "labels_train.csv",
-    "val":   _LABELS_DIR / "labels_val.csv",
-    "test":  _LABELS_DIR / "labels_test.csv",
+    "train": _LABELS_DIR / "train.csv",
+    "val":   _LABELS_DIR / "val.csv",
+    "test":  _LABELS_DIR / "test.csv",
 }
 
 # ImageNet normalisation — sensible default for pretrained backbones

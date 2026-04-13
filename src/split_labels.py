@@ -3,7 +3,10 @@ import random
 from itertools import groupby
 from pathlib import Path
 
+from quality_filter import filter_images
+
 LABELS_DIR = Path(__file__).parent.parent / "data" / "labels"
+IMG_DIR    = Path(__file__).parent.parent / "data" / "images" / "raw"
 INPUT_FILE = LABELS_DIR / "labels_train2.csv"
 
 TRAIN_RATIO = 0.80
@@ -38,6 +41,10 @@ def group_consecutive(rows: list[list[str]]) -> list[list[list[str]]]:
 
 def main() -> None:
     header, rows = read_csv(INPUT_FILE)
+
+    passing = set(filter_images([row[0] for row in rows], IMG_DIR))
+    rows = [row for row in rows if row[0] in passing]
+    print(f"After quality filter: {len(rows)} images remain")
 
     groups = group_consecutive(rows)
     print(f"Total samples: {len(rows)}  |  grain groups: {len(groups)}")
