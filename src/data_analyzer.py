@@ -66,6 +66,8 @@ def main():
             status, reason = "remove", "corrupted"
         elif sharp < SHARP_LIMIT:
             status, reason = "remove", f"blur_{sharp:.1f}"
+        elif not (BRIGHT_MIN < bright < BRIGHT_MAX):
+            status, reason = "remove", f"light_{bright:.1f}"
         else:
             status, reason = "good", "ok"
 
