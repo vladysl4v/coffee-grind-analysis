@@ -15,11 +15,24 @@ for images, labels in train_loader:
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+
+from region_extraction import extract_region
+
+
+class SegmentCoffeeRegion:
+    """Torchvision-compatible transform that masks out background pixels,
+    leaving only the coffee grain region. Applied before any resize/crop."""
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        arr = np.asarray(image)
+        masked = extract_region(arr, cropping=False)
+        return Image.fromarray(masked.astype(np.uint8))
 
 _ROOT       = Path(__file__).parent.parent
 _IMAGES_DIR = _ROOT / "data" / "images"
@@ -38,19 +51,20 @@ _NORMALIZE = transforms.Normalize(
 )
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
-    transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+    SegmentCoffeeRegion(),
+    transforms.CenterCrop(224),
+    # transforms.RandomHorizontalFlip(),
+    # transforms.RandomVerticalFlip(),
+    # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
     transforms.ToTensor(),
-    _NORMALIZE,
+    # _NORMALIZE,
 ])
 
 DEFAULT_EVAL_TRANSFORM = transforms.Compose([
-    transforms.Resize(256),
+    SegmentCoffeeRegion(),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    _NORMALIZE,
+    # _NORMALIZE,
 ])
 
 
