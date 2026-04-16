@@ -106,7 +106,7 @@ uv run python src/split_labels.py
 | Val   | 16 (10%)  | ~58  |
 | Test  | 16 (10%)  | ~58  |
 
-596 images pass quality filtering (52 blurry images removed). Fixed seed `SEED = 42`.
+607 images pass quality filtering (41 blurry images removed). Fixed seed `SEED = 42`.
 
 ## Data Loader
 
@@ -124,3 +124,26 @@ for images, labels in train_loader:
 ```
 
 Default pipeline: background segmentation → `CenterCrop(224)` → `ToTensor`. `SegmentCoffeeRegion` is also available as a standalone transform if needed.
+
+## Training
+
+```bash
+# ResNet18 — frozen backbone, trains only the regression head (recommended starting point)
+uv run python src/train.py --model resnet18
+
+# ResNet18 — full fine-tune
+uv run python src/train.py --model resnet18 --unfreeze
+
+# SimpleCNN — lightweight baseline
+uv run python src/train.py --model simple_cnn
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--model` | required | `resnet18` or `simple_cnn` |
+| `--epochs` | `50` | Number of training epochs |
+| `--lr` | `1e-3` | Learning rate |
+| `--batch-size` | `32` | Batch size |
+| `--unfreeze` | off | Fine-tune full backbone (ResNet18 only) |
+
+Artifacts (loss curves, scatter plots, checkpoints) are saved to `data/statistics/train/<model>/run_001/`.
