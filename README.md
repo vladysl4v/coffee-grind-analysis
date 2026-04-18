@@ -146,4 +146,4 @@ uv run python src/train.py --model simple_cnn
 | `--batch-size` | `32` | Batch size |
 | `--unfreeze` | off | Fine-tune full backbone (ResNet18 only) |
 
-Artifacts (loss curves, scatter plots, checkpoints) are saved to `data/statistics/train/<model>/run_001/`.
+Artifacts (loss curves, scatter plots, checkpoints) are saved to `data/runs/<model>/run_001/`.

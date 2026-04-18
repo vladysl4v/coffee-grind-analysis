@@ -9,6 +9,7 @@ uv run python src/train.py --model resnet18 --unfreeze
 """
 
 import argparse
+import csv
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -59,7 +60,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    base_dir = _ROOT / "data" / "statistics" / "train" / args.model
+    base_dir = _ROOT / "data" / "runs" / args.model
     run_id = len(sorted(base_dir.glob("run_*"))) + 1
     run_dir = base_dir / f"run_{run_id:03d}"
     models_dir = run_dir / "models"
@@ -82,7 +83,11 @@ def main():
     train_mse, val_mse = [], []
     train_mae, val_mae = [], []
 
-    for epoch in range(args.epochs):
+    metrics_path = run_dir / "metrics.csv"
+    with open(metrics_path, "w", newline="") as f:
+        csv.writer(f).writerow(["epoch", "train_mse", "train_mae", "val_mse", "val_mae"])
+
+    for epoch in range(1, args.epochs + 1):
         model.train()
         total_mse, total_mae = 0, 0
         for images, labels in train_loader:
@@ -108,14 +113,17 @@ def main():
         val_mse.append(total_mse / len(val_loader))
         val_mae.append(total_mae / len(val_loader))
 
-        print(f"Epoch {epoch+1}/{args.epochs} | train mse={train_mse[-1]:.4f} mae={train_mae[-1]:.4f} | val mse={val_mse[-1]:.4f} mae={val_mae[-1]:.4f}")
+        print(f"Epoch {epoch}/{args.epochs} | train mse={train_mse[-1]:.4f} mae={train_mae[-1]:.4f} | val mse={val_mse[-1]:.4f} mae={val_mae[-1]:.4f}")
+
+        with open(metrics_path, "a", newline="") as f:
+            csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
 
         _save_plot(train_mse, val_mse, "MSE Loss", graphs_dir / "mse.png")
         _save_plot(train_mae, val_mae, "MAE", graphs_dir / "mae.png")
 
         if epoch % 5 == 0:
             torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
-            _save_scatter(model, val_loader, device, epoch, graphs_dir)
+            _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
 
 
 def _save_plot(train_vals, val_vals, title, path):
@@ -129,7 +137,7 @@ def _save_plot(train_vals, val_vals, title, path):
     plt.close()
 
 
-def _save_scatter(model, val_loader, device, epoch, graphs_dir):
+def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir):
     model.eval()
     preds_list, gt_list = [], []
     with torch.no_grad():
@@ -140,6 +148,11 @@ def _save_scatter(model, val_loader, device, epoch, graphs_dir):
     preds = np.concatenate(preds_list)
     gt    = np.concatenate(gt_list)
     mse   = np.mean((preds - gt) ** 2)
+
+    with open(run_dir / f"predictions_epoch_{epoch:03d}.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["ground_truth", "predicted"])
+        w.writerows(zip(gt.tolist(), preds.tolist()))
 
     plt.figure()
     plt.scatter(gt, preds, alpha=0.5)

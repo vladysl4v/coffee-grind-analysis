@@ -10,3 +10,6 @@ wheels/
 .venv
 *.png
 labels_train2.csv
+
+# Training runs
+data/runs/
