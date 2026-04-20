@@ -15,27 +15,14 @@ for images, labels in train_loader:
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from region_extraction import extract_region
-
-
-class SegmentCoffeeRegion:
-    """Torchvision-compatible transform that masks out background pixels,
-    leaving only the coffee grain region. Applied before any resize/crop."""
-
-    def __call__(self, image: Image.Image) -> Image.Image:
-        arr = np.asarray(image)
-        masked = extract_region(arr, cropping=False)
-        return Image.fromarray(masked.astype(np.uint8))
-
 _ROOT       = Path(__file__).parent.parent
-_IMAGES_DIR = _ROOT / "data" / "images" / "raw"
+_IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
 _LABELS_DIR = _ROOT / "data" / "labels"
 
 _CSV = {
@@ -51,9 +38,7 @@ _NORMALIZE = transforms.Normalize(
 )
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
-    SegmentCoffeeRegion(),
-    transforms.Resize((224, 224)),
-    transforms.RandomCrop(224),
+    transforms.CenterCrop(224),
     transforms.RandomHorizontalFlip(p=0.5),
     transforms.RandomVerticalFlip(p=0.5),
     transforms.ColorJitter(brightness=0.1, contrast=0.1),
@@ -62,8 +47,6 @@ DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
 ])
 
 DEFAULT_EVAL_TRANSFORM = transforms.Compose([
-    SegmentCoffeeRegion(),
-    transforms.Resize((224, 224)),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
     _NORMALIZE,
@@ -132,25 +115,28 @@ def get_loaders(
     t_train = train_transform or DEFAULT_TRAIN_TRANSFORM
     t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
 
+    _loader_kwargs = dict(
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
+    )
     train_loader = DataLoader(
         CoffeeDataset("train", transform=t_train),
         batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True,
+        **_loader_kwargs,
     )
     val_loader = DataLoader(
         CoffeeDataset("val", transform=t_eval),
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
+        **_loader_kwargs,
     )
     test_loader = DataLoader(
         CoffeeDataset("test", transform=t_eval),
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
+        **_loader_kwargs,
     )
     return train_loader, val_loader, test_loader
