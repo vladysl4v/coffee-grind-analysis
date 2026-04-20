@@ -52,19 +52,21 @@ _NORMALIZE = transforms.Normalize(
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
     SegmentCoffeeRegion(),
-    transforms.CenterCrop(224),
-    # transforms.RandomHorizontalFlip(),
-    # transforms.RandomVerticalFlip(),
-    # transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+    transforms.Resize((224, 224)),
+    transforms.RandomCrop(224),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomVerticalFlip(p=0.5),
+    transforms.ColorJitter(brightness=0.1, contrast=0.1),
     transforms.ToTensor(),
-    # _NORMALIZE,
+    _NORMALIZE,
 ])
 
 DEFAULT_EVAL_TRANSFORM = transforms.Compose([
     SegmentCoffeeRegion(),
+    transforms.Resize((224, 224)),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    # _NORMALIZE,
+    _NORMALIZE,
 ])
 
 
@@ -108,7 +110,7 @@ class CoffeeDataset(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+        label = torch.tensor(self.labels[idx] / 100.0, dtype=torch.float32)
         return image, label
 
 

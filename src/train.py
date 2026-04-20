@@ -13,12 +13,14 @@ import csv
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
 from data_loader import get_loaders, DEFAULT_TRAIN_TRANSFORM
 from models.simple_cnn import SimpleCNN
-from models.resnet import get_resnet18
+from models.resnet import get_resnet152
 from pathlib import Path
 
 
@@ -27,7 +29,8 @@ _ROOT = Path(__file__).parent.parent
 
 MODELS = {
     "simple_cnn": lambda args: SimpleCNN(),
-    "resnet18":   lambda args: get_resnet18(freeze_backbone=not args.unfreeze),
+    #"resnet18":   lambda args: get_resnet18(freeze_backbone=not args.unfreeze),
+    "resnet152":  lambda args: get_resnet152(freeze_backbone=not args.unfreeze),
 }
 
 
@@ -92,7 +95,7 @@ def main():
         total_mse, total_mae = 0, 0
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
-            preds = model(images)
+            preds = model(images).view(-1)
             loss = criterion(preds, labels)
             optimizer.zero_grad()
             loss.backward()
@@ -107,19 +110,19 @@ def main():
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
-                preds = model(images)
+                preds = model(images).view(-1)
                 total_mse += criterion(preds, labels).item()
                 total_mae += (preds - labels).abs().mean().item()
         val_mse.append(total_mse / len(val_loader))
         val_mae.append(total_mae / len(val_loader))
 
-        print(f"Epoch {epoch}/{args.epochs} | train mse={train_mse[-1]:.4f} mae={train_mae[-1]:.4f} | val mse={val_mse[-1]:.4f} mae={val_mae[-1]:.4f}")
+        print(f"Epoch {epoch}/{args.epochs} | train mse={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val mse={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f}")
 
         with open(metrics_path, "a", newline="") as f:
             csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
 
-        _save_plot(train_mse, val_mse, "MSE Loss", graphs_dir / "mse.png")
-        _save_plot(train_mae, val_mae, "MAE", graphs_dir / "mae.png")
+        _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], "MSE Loss", graphs_dir / "mse.png")
+        _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
 
         if epoch % 5 == 0:
             torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
@@ -142,11 +145,11 @@ def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir):
     preds_list, gt_list = [], []
     with torch.no_grad():
         for images, labels in val_loader:
-            preds_list.append(model(images.to(device)).cpu().numpy())
+            preds_list.append(model(images.to(device)).view(-1).cpu().numpy())
             gt_list.append(labels.numpy())
 
-    preds = np.concatenate(preds_list)
-    gt    = np.concatenate(gt_list)
+    preds = np.concatenate(preds_list) * 100
+    gt    = np.concatenate(gt_list) * 100
     mse   = np.mean((preds - gt) ** 2)
 
     with open(run_dir / f"predictions_epoch_{epoch:03d}.csv", "w", newline="") as f:

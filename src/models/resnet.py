@@ -2,7 +2,7 @@ import torch.nn as nn
 from torchvision import models
 
 
-def get_resnet18(freeze_backbone: bool = True) -> nn.Module:
+def get_resnet152(freeze_backbone: bool = True) -> nn.Module:
     """ResNet18 pretrained on ImageNet with a single regression output.
 
     Parameters
@@ -10,7 +10,7 @@ def get_resnet18(freeze_backbone: bool = True) -> nn.Module:
     freeze_backbone: if True, only the final FC layer is trained initially.
                      Set to False to fine-tune the whole network.
     """
-    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    model = models.resnet152(weights=models.ResNet152_Weights.DEFAULT)
 
     if freeze_backbone:
         for param in model.parameters():
