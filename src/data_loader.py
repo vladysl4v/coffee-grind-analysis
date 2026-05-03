@@ -23,10 +23,17 @@ from torchvision import transforms
 
 _ROOT       = Path(__file__).parent.parent
 _IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
+_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_segmentation"
 _LABELS_DIR = _ROOT / "data" / "labels"
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
+    "val":   _LABELS_DIR / "val.csv",
+    "test":  _LABELS_DIR / "test.csv",
+}
+
+_AUG_CSV = {
+    "train": _LABELS_DIR / "augmented_train.csv",
     "val":   _LABELS_DIR / "val.csv",
     "test":  _LABELS_DIR / "test.csv",
 }
@@ -63,11 +70,13 @@ class CoffeeDataset(Dataset):
                Pass None to get raw PIL images.
     """
 
-    def __init__(self, split: str, transform=None):
-        if split not in _CSV:
-            raise ValueError(f"split must be one of {list(_CSV)}, got {split!r}")
+    def __init__(self, split: str, transform=None, csv_map=None, images_dir=None):
+        csv_map = csv_map or _CSV
+        if split not in csv_map:
+            raise ValueError(f"split must be one of {list(csv_map)}, got {split!r}")
 
-        csv_path = _CSV[split]
+        self._images_dir = images_dir or _IMAGES_DIR
+        csv_path = csv_map[split]
         if not csv_path.exists():
             raise FileNotFoundError(
                 f"{csv_path} not found — run src/split_labels.py first."
@@ -82,7 +91,7 @@ class CoffeeDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        img_path = _IMAGES_DIR / self.samples[idx]
+        img_path = self._images_dir / self.samples[idx]
         if not img_path.exists():
             raise FileNotFoundError(
                 f"Image not found: {img_path}\n"
@@ -102,6 +111,7 @@ def get_loaders(
     num_workers: int = 4,
     train_transform=None,
     eval_transform=None,
+    use_augmented_data: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Return (train_loader, val_loader, test_loader).
 
@@ -114,6 +124,8 @@ def get_loaders(
     """
     t_train = train_transform or DEFAULT_TRAIN_TRANSFORM
     t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
+    csv_map  = _AUG_CSV if use_augmented_data else _CSV
+    img_dir  = _AUG_IMAGES_DIR if use_augmented_data else _IMAGES_DIR
 
     _loader_kwargs = dict(
         num_workers=num_workers,
@@ -122,19 +134,19 @@ def get_loaders(
         prefetch_factor=4 if num_workers > 0 else None,
     )
     train_loader = DataLoader(
-        CoffeeDataset("train", transform=t_train),
+        CoffeeDataset("train", transform=t_train, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=True,
         **_loader_kwargs,
     )
     val_loader = DataLoader(
-        CoffeeDataset("val", transform=t_eval),
+        CoffeeDataset("val", transform=t_eval, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=False,
         **_loader_kwargs,
     )
     test_loader = DataLoader(
-        CoffeeDataset("test", transform=t_eval),
+        CoffeeDataset("test", transform=t_eval, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=False,
         **_loader_kwargs,

@@ -69,6 +69,8 @@ def parse_args():
                         help="train with backbone fully unfrozen from epoch 1")
     parser.add_argument("--unfreeze-after", type=int, default=None, metavar="N",
                         help="unfreeze backbone after N epochs and fine-tune at lr/10 (overrides --unfreeze)")
+    parser.add_argument("--augmented-data", action="store_true",
+                        help="use augmented_segmentation/ images and augmented_train.csv (run precompute_augmented_segmentation.py first)")
     return parser.parse_args()
 
 
@@ -91,7 +93,8 @@ def main():
     train_loader, val_loader, _ = get_loaders(
         batch_size=args.batch_size,
         train_transform=DEFAULT_TRAIN_TRANSFORM,
-        num_workers=8
+        num_workers=8,
+        use_augmented_data=args.augmented_data,
     )
 
     if args.unfreeze_after is not None:
@@ -113,6 +116,7 @@ def main():
         "batch_size": args.batch_size,
         "unfreeze": args.unfreeze,
         "unfreeze_after": args.unfreeze_after,
+        "augmented_data": args.augmented_data,
         "device": device.type,
     }
     with open(run_dir / "config.json", "w") as f:
