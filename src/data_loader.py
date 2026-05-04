@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from numerical_features import (
+    FEATURE_NAMES,
     extract_numerical_features,
     get_normalized_gray_crop,
 )
@@ -30,6 +31,7 @@ from numerical_features import (
 _ROOT       = Path(__file__).parent.parent
 _IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
 _LABELS_DIR = _ROOT / "data" / "labels"
+_FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
@@ -128,6 +130,7 @@ class NumericalFeatureCoffeeDataset(CoffeeDataset):
         self.feature_mean = feature_mean
         self.feature_std = feature_std
         self._feature_cache: dict[int, np.ndarray] = {}
+        self._precomputed_features = self._load_precomputed_features(split)
 
     def _load_image(self, idx: int) -> Image.Image:
         img_path = _IMAGES_DIR / self.samples[idx]
@@ -146,11 +149,41 @@ class NumericalFeatureCoffeeDataset(CoffeeDataset):
         transform = self.image_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
         return transform(image)
 
+    def _load_precomputed_features(self, split: str) -> dict[str, np.ndarray]:
+        csv_path = _FEATURES_DIR / f"{split}_features.csv"
+        if not csv_path.exists():
+            return {}
+
+        df = pd.read_csv(csv_path)
+        required_columns = {"sample", *FEATURE_NAMES}
+        missing_columns = required_columns.difference(df.columns)
+        if missing_columns:
+            raise ValueError(
+                f"Precomputed feature CSV {csv_path} is missing columns: {sorted(missing_columns)}"
+            )
+
+        feature_map: dict[str, np.ndarray] = {}
+        for _, row in df.iterrows():
+            feature_map[row["sample"]] = row[list(FEATURE_NAMES)].to_numpy(dtype=np.float32)
+
+        missing_samples = sorted(set(self.samples).difference(feature_map))
+        if missing_samples:
+            raise ValueError(
+                f"Precomputed feature CSV {csv_path} is missing {len(missing_samples)} samples "
+                f"(for example: {missing_samples[:3]})"
+            )
+
+        return feature_map
+
     def _feature_vector(self, idx: int, image: Image.Image | None = None) -> np.ndarray:
         if idx not in self._feature_cache:
-            if image is None:
-                image = self._load_image(idx)
-            self._feature_cache[idx] = extract_numerical_features(image).astype(np.float32)
+            sample = self.samples[idx]
+            if sample in self._precomputed_features:
+                self._feature_cache[idx] = self._precomputed_features[sample]
+            else:
+                if image is None:
+                    image = self._load_image(idx)
+                self._feature_cache[idx] = extract_numerical_features(image).astype(np.float32)
         return self._feature_cache[idx]
 
     def compute_feature_stats(self) -> tuple[np.ndarray, np.ndarray]:
@@ -204,6 +237,7 @@ def get_loaders(
         CoffeeDataset("train", transform=t_train),
         batch_size=batch_size,
         shuffle=True,
+        drop_last=True,
         **_loader_kwargs,
     )
     val_loader = DataLoader(
@@ -265,6 +299,7 @@ def get_numerical_feature_loaders(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
+        drop_last=True,
         **_loader_kwargs,
     )
     val_loader = DataLoader(

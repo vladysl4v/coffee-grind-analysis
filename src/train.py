@@ -167,6 +167,12 @@ def main():
     print(f"Model: {args.model} | Device: {device} | Run: {run_dir.name}")
 
     train_loader, val_loader, _ = MODEL_CONFIGS[args.model]["loaders"](args)
+    print(
+        "Loaders ready "
+        f"| train samples={len(train_loader.dataset)} batches={len(train_loader)} "
+        f"| val samples={len(val_loader.dataset)} batches={len(val_loader)}",
+        flush=True,
+    )
 
     if args.unfreeze_after is not None:
         args.unfreeze = False
@@ -201,6 +207,7 @@ def main():
         csv.writer(f).writerow(["epoch", "train_mse", "train_mae", "val_mse", "val_mae"])
 
     for epoch in range(1, args.epochs + 1):
+        print(f"Starting epoch {epoch}/{args.epochs}", flush=True)
         if args.unfreeze_after is not None and epoch == args.unfreeze_after + 1:
             for param in model.parameters():
                 param.requires_grad = True
@@ -214,8 +221,15 @@ def main():
         model.train()
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
-        for batch in train_loader:
+        for batch_idx, batch in enumerate(train_loader, start=1):
             images, features, labels = _move_batch_to_device(batch, device)
+            if batch_idx == 1:
+                feature_shape = None if features is None else tuple(features.shape)
+                print(
+                    f"Train first batch | images={tuple(images.shape)} "
+                    f"| features={feature_shape} | labels={tuple(labels.shape)}",
+                    flush=True,
+                )
             optimizer.zero_grad()
             with autocast(device_type=device.type):
                 preds = _forward_batch(model, images, features).view(-1)
@@ -226,6 +240,12 @@ def main():
             with torch.no_grad():
                 acc_mse += loss.detach()
                 acc_mae += (preds.detach() - labels).abs().mean()
+            if batch_idx == 1 or batch_idx % 10 == 0 or batch_idx == len(train_loader):
+                print(
+                    f"Train batch {batch_idx}/{len(train_loader)} "
+                    f"| loss={loss.detach().item() * 10000:.2f}",
+                    flush=True,
+                )
         train_mse.append((acc_mse / len(train_loader)).item())
         train_mae.append((acc_mae / len(train_loader)).item())
 
@@ -233,12 +253,24 @@ def main():
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
         with torch.no_grad():
-            for batch in val_loader:
+            for batch_idx, batch in enumerate(val_loader, start=1):
                 images, features, labels = _move_batch_to_device(batch, device)
+                if batch_idx == 1:
+                    feature_shape = None if features is None else tuple(features.shape)
+                    print(
+                        f"Val first batch | images={tuple(images.shape)} "
+                        f"| features={feature_shape} | labels={tuple(labels.shape)}",
+                        flush=True,
+                    )
                 with autocast(device_type=device.type):
                     preds = _forward_batch(model, images, features).view(-1)
                     acc_mse += criterion(preds, labels)
                 acc_mae += (preds - labels).abs().mean()
+                if batch_idx == 1 or batch_idx == len(val_loader):
+                    print(
+                        f"Val batch {batch_idx}/{len(val_loader)}",
+                        flush=True,
+                    )
         val_mse.append((acc_mse / len(val_loader)).item())
         val_mae.append((acc_mae / len(val_loader)).item())
 

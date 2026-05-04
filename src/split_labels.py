@@ -103,9 +103,9 @@ def main() -> None:
     val   = flatten(val_groups)
     test  = flatten(test_groups)
 
-    write_csv(LABELS_DIR / "labels_train.csv", header, train)
-    write_csv(LABELS_DIR / "labels_val.csv",   header, val)
-    write_csv(LABELS_DIR / "labels_test.csv",  header, test)
+    write_csv(LABELS_DIR / "train.csv", header, train)
+    write_csv(LABELS_DIR / "val.csv",   header, val)
+    write_csv(LABELS_DIR / "test.csv",  header, test)
 
     print(
         f"Groups → train {len(train_groups)} | val {len(val_groups)} | test {len(test_groups)}\n"

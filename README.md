@@ -95,6 +95,10 @@ uv run python src/quality_filter.py
 ```bash
 uv run python src/split_labels.py
 ```
+6. Precompute numerical features for the hybrid models:
+```bash
+uv run python src/precompute_numerical_features.py
+```
 
 ### Split rationale
 
@@ -127,6 +131,8 @@ Default pipeline: background segmentation → `CenterCrop(224)` → `ToTensor`. 
 
 ## Training
 
+For `numerical_features_plus_cnn` and `numerical_features_plus_efficientnet_b0`, the loader will automatically use precomputed feature CSVs from `data/features/numerical/` when they exist. Otherwise, features are computed on the fly.
+
 ```bash
 # ResNet18 — frozen backbone, trains only the regression head (recommended starting point)
 uv run python src/train.py --model resnet18
@@ -136,6 +142,9 @@ uv run python src/train.py --model resnet18 --unfreeze
 
 # SimpleCNN — lightweight baseline
 uv run python src/train.py --model simple_cnn
+
+# Hybrid CNN + numerical features
+uv run python src/train.py --model numerical_features_plus_cnn
 ```
 
 | Argument | Default | Description |
