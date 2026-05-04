@@ -15,11 +15,17 @@ for images, labels in train_loader:
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+
+from numerical_features import (
+    extract_numerical_features,
+    get_normalized_gray_crop,
+)
 
 _ROOT       = Path(__file__).parent.parent
 _IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
@@ -47,6 +53,12 @@ DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
 ])
 
 DEFAULT_EVAL_TRANSFORM = transforms.Compose([
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    _NORMALIZE,
+])
+
+DEFAULT_FEATURE_MODEL_TRANSFORM = transforms.Compose([
     transforms.CenterCrop(224),
     transforms.ToTensor(),
     _NORMALIZE,
@@ -97,6 +109,73 @@ class CoffeeDataset(Dataset):
         return image, label
 
 
+class NumericalFeatureCoffeeDataset(CoffeeDataset):
+    def __init__(
+        self,
+        split: str,
+        image_mode: str = "rgb",
+        transform=None,
+        feature_mean: np.ndarray | None = None,
+        feature_std: np.ndarray | None = None,
+    ):
+        super().__init__(split, transform=None)
+
+        if image_mode not in {"rgb", "gray"}:
+            raise ValueError(f"image_mode must be 'rgb' or 'gray', got {image_mode!r}")
+
+        self.image_mode = image_mode
+        self.image_transform = transform
+        self.feature_mean = feature_mean
+        self.feature_std = feature_std
+        self._feature_cache: dict[int, np.ndarray] = {}
+
+    def _load_image(self, idx: int) -> Image.Image:
+        img_path = _IMAGES_DIR / self.samples[idx]
+        if not img_path.exists():
+            raise FileNotFoundError(
+                f"Image not found: {img_path}\n"
+                f"Place all images in {_IMAGES_DIR}"
+            )
+        return Image.open(img_path).convert("RGB")
+
+    def _image_tensor(self, image: Image.Image) -> torch.Tensor:
+        if self.image_mode == "gray":
+            gray = get_normalized_gray_crop(image)
+            return torch.from_numpy(gray).unsqueeze(0).float() / 255.0
+
+        transform = self.image_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+        return transform(image)
+
+    def _feature_vector(self, idx: int, image: Image.Image | None = None) -> np.ndarray:
+        if idx not in self._feature_cache:
+            if image is None:
+                image = self._load_image(idx)
+            self._feature_cache[idx] = extract_numerical_features(image).astype(np.float32)
+        return self._feature_cache[idx]
+
+    def compute_feature_stats(self) -> tuple[np.ndarray, np.ndarray]:
+        features = np.stack(
+            [self._feature_vector(idx) for idx in range(len(self))],
+            axis=0,
+        ).astype(np.float32)
+        mean = features.mean(axis=0)
+        std = features.std(axis=0)
+        std = np.where(std < 1e-6, 1.0, std)
+        return mean.astype(np.float32), std.astype(np.float32)
+
+    def __getitem__(self, idx: int):
+        image = self._load_image(idx)
+        image_tensor = self._image_tensor(image)
+
+        features = self._feature_vector(idx, image=image).copy()
+        if self.feature_mean is not None and self.feature_std is not None:
+            features = (features - self.feature_mean) / self.feature_std
+
+        label = torch.tensor(self.labels[idx] / 100.0, dtype=torch.float32)
+        feature_tensor = torch.from_numpy(features.astype(np.float32))
+        return image_tensor, feature_tensor, label
+
+
 def get_loaders(
     batch_size: int = 32,
     num_workers: int = 4,
@@ -135,6 +214,67 @@ def get_loaders(
     )
     test_loader = DataLoader(
         CoffeeDataset("test", transform=t_eval),
+        batch_size=batch_size,
+        shuffle=False,
+        **_loader_kwargs,
+    )
+    return train_loader, val_loader, test_loader
+
+
+def get_numerical_feature_loaders(
+    batch_size: int = 32,
+    num_workers: int = 4,
+    image_mode: str = "rgb",
+    train_transform=None,
+    eval_transform=None,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    t_train = train_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+    t_eval = eval_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+
+    train_dataset = NumericalFeatureCoffeeDataset(
+        "train",
+        image_mode=image_mode,
+        transform=t_train,
+    )
+    feature_mean, feature_std = train_dataset.compute_feature_stats()
+    train_dataset.feature_mean = feature_mean
+    train_dataset.feature_std = feature_std
+
+    val_dataset = NumericalFeatureCoffeeDataset(
+        "val",
+        image_mode=image_mode,
+        transform=t_eval,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+    )
+    test_dataset = NumericalFeatureCoffeeDataset(
+        "test",
+        image_mode=image_mode,
+        transform=t_eval,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+    )
+
+    _loader_kwargs = dict(
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
+    )
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        **_loader_kwargs,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        **_loader_kwargs,
+    )
+    test_loader = DataLoader(
+        test_dataset,
         batch_size=batch_size,
         shuffle=False,
         **_loader_kwargs,

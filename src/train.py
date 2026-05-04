@@ -20,27 +20,103 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-from data_loader import get_loaders, DEFAULT_TRAIN_TRANSFORM
+from data_loader import (
+    DEFAULT_TRAIN_TRANSFORM,
+    get_loaders,
+    get_numerical_feature_loaders,
+)
 from models.simple_cnn import SimpleCNN
+from models.numerical_features_plus_cnn import NumericalFeaturesPlusCNN
+from models.numerical_features_plus_efficientnet import NumericalFeaturesPlusEfficientNetB0
 from models.resnet import get_resnet152, get_resnet18
 from models.efficientnet import get_efficientnet_b0
 from models.vit import get_vit
 from models.vit_large import get_vit_large
 from models.resnext import get_resnext50
+from numerical_features import FEATURE_NAMES
 from pathlib import Path
 
 
 _ROOT = Path(__file__).parent.parent
 
+NUM_NUMERICAL_FEATURES = len(FEATURE_NAMES)
 
-MODELS = {
-    "simple_cnn": lambda args: SimpleCNN(),
-    "resnet152":  lambda args: get_resnet152(freeze_backbone=not args.unfreeze),
-    "resnet18":   lambda args: get_resnet18(freeze_backbone=not args.unfreeze),
-    "vit":        lambda args: get_vit(freeze_backbone=not args.unfreeze),
-    "vit_large":  lambda args: get_vit_large(freeze_backbone=not args.unfreeze),
-    "resnext50":  lambda args: get_resnext50(freeze_backbone=not args.unfreeze),
-    "efficientnet_b0": lambda args: get_efficientnet_b0(freeze_backbone=not args.unfreeze),
+MODEL_CONFIGS = {
+    "simple_cnn": {
+        "builder": lambda args: SimpleCNN(),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "resnet152": {
+        "builder": lambda args: get_resnet152(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "resnet18": {
+        "builder": lambda args: get_resnet18(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "vit": {
+        "builder": lambda args: get_vit(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "vit_large": {
+        "builder": lambda args: get_vit_large(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "resnext50": {
+        "builder": lambda args: get_resnext50(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "efficientnet_b0": {
+        "builder": lambda args: get_efficientnet_b0(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            train_transform=DEFAULT_TRAIN_TRANSFORM,
+            num_workers=8,
+        ),
+    },
+    "numerical_features_plus_cnn": {
+        "builder": lambda args: NumericalFeaturesPlusCNN(NUM_NUMERICAL_FEATURES),
+        "loaders": lambda args: get_numerical_feature_loaders(
+            batch_size=args.batch_size,
+            image_mode="gray",
+            num_workers=8,
+        ),
+    },
+    "numerical_features_plus_efficientnet_b0": {
+        "builder": lambda args: NumericalFeaturesPlusEfficientNetB0(
+            NUM_NUMERICAL_FEATURES,
+            freeze_backbone=not args.unfreeze,
+        ),
+        "loaders": lambda args: get_numerical_feature_loaders(
+            batch_size=args.batch_size,
+            image_mode="rgb",
+            num_workers=8,
+        ),
+    },
 }
 
 
@@ -55,15 +131,17 @@ def parse_args():
             "  uv run python src/train.py --model simple_cnn --lr 1e-4 --batch-size 16\n"
         ),
     )
-    parser.add_argument("--model", required=True, choices=MODELS.keys(),
+    parser.add_argument("--model", required=True, choices=MODEL_CONFIGS.keys(),
                         help="model architecture to train:\n"
                              "  resnet18   — pretrained ResNet18, only the regression head is trained by default\n"
-                             "  simple_cnn — lightweight 3-layer CNN trained from scratch")
+                             "  simple_cnn — lightweight 3-layer CNN trained from scratch\n"
+                             "  numerical_features_plus_cnn — grayscale CNN fused with 19 engineered features\n"
+                             "  numerical_features_plus_efficientnet_b0 — EfficientNet-B0 fused with 19 engineered features")
     parser.add_argument("--epochs", type=int, default=50,
                         help="number of training epochs (default: 50)")
     parser.add_argument("--lr", type=float, default=1e-3,
                         help="learning rate for Adam optimizer (default: 1e-3)")
-    parser.add_argument("--batch-size", type=int, default=32,
+    parser.add_argument("--batch-size", type=int, default=4,
                         help="number of images per batch (default: 32)")
     parser.add_argument("--unfreeze", action="store_true",
                         help="train with backbone fully unfrozen from epoch 1")
@@ -88,17 +166,17 @@ def main():
         torch.backends.cudnn.benchmark = True
     print(f"Model: {args.model} | Device: {device} | Run: {run_dir.name}")
 
-    train_loader, val_loader, _ = get_loaders(
-        batch_size=args.batch_size,
-        train_transform=DEFAULT_TRAIN_TRANSFORM,
-        num_workers=8
-    )
+    train_loader, val_loader, _ = MODEL_CONFIGS[args.model]["loaders"](args)
 
     if args.unfreeze_after is not None:
         args.unfreeze = False
-    model = MODELS[args.model](args).to(device)
+    model = MODEL_CONFIGS[args.model]["builder"](args).to(device)
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = optim.Adam(
+        [param for param in model.parameters() if param.requires_grad],
+        lr=args.lr,
+        weight_decay=1e-4,
+    )
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     scaler = GradScaler(device=device.type)
 
@@ -126,19 +204,21 @@ def main():
         if args.unfreeze_after is not None and epoch == args.unfreeze_after + 1:
             for param in model.parameters():
                 param.requires_grad = True
-            backbone_params = [p for p in model.parameters() if not any(p is hp for hp in optimizer.param_groups[0]["params"])]
-            optimizer.add_param_group({"params": backbone_params, "lr": args.lr / 10, "weight_decay": 1e-4})
+            optimizer_params = [param for group in optimizer.param_groups for param in group["params"]]
+            backbone_params = [p for p in model.parameters() if not any(p is hp for hp in optimizer_params)]
+            if backbone_params:
+                optimizer.add_param_group({"params": backbone_params, "lr": args.lr / 10, "weight_decay": 1e-4})
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
             print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
 
         model.train()
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
-        for images, labels in train_loader:
-            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+        for batch in train_loader:
+            images, features, labels = _move_batch_to_device(batch, device)
             optimizer.zero_grad()
             with autocast(device_type=device.type):
-                preds = model(images).view(-1)
+                preds = _forward_batch(model, images, features).view(-1)
                 loss = criterion(preds, labels)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -153,10 +233,10 @@ def main():
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
         with torch.no_grad():
-            for images, labels in val_loader:
-                images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+            for batch in val_loader:
+                images, features, labels = _move_batch_to_device(batch, device)
                 with autocast(device_type=device.type):
-                    preds = model(images).view(-1)
+                    preds = _forward_batch(model, images, features).view(-1)
                     acc_mse += criterion(preds, labels)
                 acc_mae += (preds - labels).abs().mean()
         val_mse.append((acc_mse / len(val_loader)).item())
@@ -191,9 +271,10 @@ def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir):
     model.eval()
     preds_list, gt_list = [], []
     with torch.no_grad():
-        for images, labels in val_loader:
-            preds_list.append(model(images.to(device)).view(-1).cpu().numpy())
-            gt_list.append(labels.numpy())
+        for batch in val_loader:
+            images, features, labels = _move_batch_to_device(batch, device)
+            preds_list.append(_forward_batch(model, images, features).view(-1).cpu().numpy())
+            gt_list.append(labels.cpu().numpy())
 
     preds = np.concatenate(preds_list) * 100
     gt    = np.concatenate(gt_list) * 100
@@ -213,6 +294,29 @@ def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir):
     plt.tight_layout()
     plt.savefig(graphs_dir / f"scatter_epoch_{epoch:03d}.png")
     plt.close()
+
+
+def _move_batch_to_device(batch, device):
+    if len(batch) == 2:
+        images, labels = batch
+        return (
+            images.to(device, non_blocking=True),
+            None,
+            labels.to(device, non_blocking=True),
+        )
+
+    images, features, labels = batch
+    return (
+        images.to(device, non_blocking=True),
+        features.to(device, non_blocking=True),
+        labels.to(device, non_blocking=True),
+    )
+
+
+def _forward_batch(model, images, features):
+    if features is None:
+        return model(images)
+    return model(images, features)
 
 
 if __name__ == "__main__":
