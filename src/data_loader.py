@@ -21,10 +21,12 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-_ROOT       = Path(__file__).parent.parent
-_IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
-_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_segmentation"
-_LABELS_DIR = _ROOT / "data" / "labels"
+_ROOT            = Path(__file__).parent.parent
+_IMAGES_DIR      = _ROOT / "data" / "images" / "segmentation"
+_RAW_IMAGES_DIR  = _ROOT / "data" / "images" / "raw"
+_AUG_IMAGES_DIR  = _ROOT / "data" / "images" / "augmented_segmentation"
+_RAW_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_raw"
+_LABELS_DIR      = _ROOT / "data" / "labels"
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
@@ -38,17 +40,20 @@ _AUG_CSV = {
     "test":  _LABELS_DIR / "test.csv",
 }
 
-# ImageNet normalisation — sensible default for pretrained backbones
+_RAW_AUG_CSV = {
+    "train": _LABELS_DIR / "augmented_raw_train.csv",
+    "val":   _LABELS_DIR / "val.csv",
+    "test":  _LABELS_DIR / "test.csv",
+}
+
+# Dataset-specific normalisation computed over the training set
 _NORMALIZE = transforms.Normalize(
-    mean=[0.485, 0.456, 0.406],
-    std =[0.229, 0.224, 0.225],
+    mean=[0.1557, 0.0899, 0.0404],
+    std =[0.0483, 0.0349, 0.0190],
 )
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
     transforms.CenterCrop(224),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.RandomVerticalFlip(p=0.5),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1),
     transforms.ToTensor(),
     _NORMALIZE,
 ])
@@ -112,6 +117,9 @@ def get_loaders(
     train_transform=None,
     eval_transform=None,
     use_augmented_data: bool = False,
+    use_augmented_raw: bool = False,
+    use_raw: bool = False,
+    worker_init_fn=None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Return (train_loader, val_loader, test_loader).
 
@@ -124,19 +132,31 @@ def get_loaders(
     """
     t_train = train_transform or DEFAULT_TRAIN_TRANSFORM
     t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
-    csv_map  = _AUG_CSV if use_augmented_data else _CSV
-    img_dir  = _AUG_IMAGES_DIR if use_augmented_data else _IMAGES_DIR
+    if use_augmented_raw:
+        csv_map = _RAW_AUG_CSV
+        img_dir = _RAW_AUG_IMAGES_DIR
+    elif use_augmented_data:
+        csv_map = _AUG_CSV
+        img_dir = _AUG_IMAGES_DIR
+    elif use_raw:
+        csv_map = _CSV
+        img_dir = _RAW_IMAGES_DIR
+    else:
+        csv_map = _CSV
+        img_dir = _IMAGES_DIR
 
     _loader_kwargs = dict(
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
         prefetch_factor=4 if num_workers > 0 else None,
+        multiprocessing_context="spawn" if num_workers > 0 else None,
     )
     train_loader = DataLoader(
         CoffeeDataset("train", transform=t_train, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=True,
+        worker_init_fn=worker_init_fn,
         **_loader_kwargs,
     )
     val_loader = DataLoader(

@@ -1,17 +1,20 @@
 """
-Augment raw train images and save to augmented_segmentation/.
+Augment train images and save to a target directory.
 
-By default augmented images are saved as-is (no segmentation applied).
-Pass --segment to also apply background masking to each augmented image.
+By default reads from raw/, applies all augmentations, and saves to augmented_segmentation/
+alongside original segmented images.
 
-Copies original segmented val/test/train images into the same folder so the
-data loader can point at a single directory regardless of split.
+Pass --raw-output to save augmented raw images to augmented_raw/ instead (no segmentation).
+Pass --segment to apply background masking to each augmented image (augmented_segmentation/ only).
+Pass --no-photometric to skip colour/lighting augmentations (recommended with --segment).
 
 Usage
 -----
 uv run python src/precompute_augmented_segmentation.py
 uv run python src/precompute_augmented_segmentation.py --augmentations-per-image 5
-uv run python src/precompute_augmented_segmentation.py --segment
+uv run python src/precompute_augmented_segmentation.py --segment --no-photometric
+uv run python src/precompute_augmented_segmentation.py --raw-output
+uv run python src/precompute_augmented_segmentation.py --raw-output --augmentations-per-image 5
 """
 
 import argparse
@@ -22,13 +25,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from augmentation import augment_image
+from augmentation import augment_image, AugmentationConfig
 from region_extraction import extract_region
 
 _ROOT       = Path(__file__).parent.parent
 _RAW_DIR    = _ROOT / "data" / "images" / "raw"
 _SEG_DIR    = _ROOT / "data" / "images" / "segmentation"
 _OUT_DIR    = _ROOT / "data" / "images" / "augmented_segmentation"
+_RAW_OUT_DIR = _ROOT / "data" / "images" / "augmented_raw"
 _LABELS_DIR = _ROOT / "data" / "labels"
 
 
@@ -60,23 +64,44 @@ def parse_args():
     )
     parser.add_argument("--augmentations-per-image", type=int, default=3, metavar="N",
                         help="number of augmented variants per train image (default: 3)")
+    parser.add_argument("--raw-output", action="store_true",
+                        help="save augmented raw images to augmented_raw/ (no segmentation); "
+                             "use with --raw --augmented-data when training")
     parser.add_argument("--segment", action="store_true",
-                        help="apply background segmentation to each augmented image")
+                        help="apply background segmentation to each augmented image (ignored with --raw-output)")
+    parser.add_argument("--no-photometric", action="store_true",
+                        help="disable colour/lighting augmentations (brightness, contrast, saturation, sharpness, blur, noise, jpeg); "
+                             "recommended when using --segment to avoid breaking colour-based masking")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    _OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # copy original segmented images (train + val + test) into output dir
+    out_dir = _RAW_OUT_DIR if args.raw_output else _OUT_DIR
+    copy_src = _RAW_DIR if args.raw_output else _SEG_DIR
+    out_csv = _LABELS_DIR / ("augmented_raw_train.csv" if args.raw_output else "augmented_train.csv")
+    apply_segment = args.segment and not args.raw_output
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     copied = 0
-    for img_path in _SEG_DIR.iterdir():
-        dest = _OUT_DIR / img_path.name
+    for img_path in copy_src.iterdir():
+        dest = out_dir / img_path.name
         if not dest.exists():
             shutil.copy2(img_path, dest)
             copied += 1
-    print(f"Copied {copied} original segmented images → {_OUT_DIR.name}/")
+    print(f"Copied {copied} original images from {copy_src.name}/ → {out_dir.name}/")
+
+    aug_config = AugmentationConfig(
+        brightness_prob=0.0,
+        contrast_prob=0.0,
+        saturation_prob=0.0,
+        sharpness_prob=0.0,
+        blur_prob=0.0,
+        noise_prob=0.0,
+        jpeg_prob=0.0,
+    ) if args.no_photometric else AugmentationConfig()
 
     header, train_rows = _read_csv(_LABELS_DIR / "train.csv")
     augmented_rows: list[list[str]] = []
@@ -94,15 +119,15 @@ def main() -> None:
 
         for aug_idx in range(args.augmentations_per_image):
             aug_name = f"{Path(name).stem}__aug_{aug_idx:03d}{Path(name).suffix}"
-            out_path = _OUT_DIR / aug_name
+            out_path = out_dir / aug_name
 
             if out_path.exists():
                 augmented_rows.append([aug_name, label])
                 continue
 
             try:
-                result = augment_image(raw_img)
-                if args.segment:
+                result = augment_image(raw_img, config=aug_config)
+                if apply_segment:
                     result = _apply_segmentation(result)
                 result.save(out_path)
                 augmented_rows.append([aug_name, label])
@@ -112,12 +137,12 @@ def main() -> None:
         if i % 50 == 0 or i == total:
             print(f"[{i}/{total}] processed")
 
-    _write_csv(_LABELS_DIR / "augmented_train.csv", header, train_rows + augmented_rows)
+    _write_csv(out_csv, header, train_rows + augmented_rows)
     print(
-        f"\nDone. {'Segmentation applied.' if args.segment else 'No segmentation (use --segment to enable).'}"
-        f"\n  Augmented images    : {len(augmented_rows)}"
-        f"\n  augmented_train.csv : {len(train_rows)} original + {len(augmented_rows)} augmented = {len(train_rows) + len(augmented_rows)} total"
-        f"\n  Output dir          : {_OUT_DIR}"
+        f"\nDone."
+        f"\n  Augmented images : {len(augmented_rows)}"
+        f"\n  Output CSV       : {out_csv.name} ({len(train_rows)} original + {len(augmented_rows)} augmented)"
+        f"\n  Output dir       : {out_dir}"
     )
 
 

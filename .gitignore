@@ -9,7 +9,13 @@ wheels/
 # Virtual environments
 .venv
 *.png
-labels_train2.csv
+
+# Label CSVs — only the fixed splits are tracked
+data/labels/*.csv
+!data/labels/train.csv
+!data/labels/val.csv
+!data/labels/test.csv
 
 # Training runs
 data/runs/
+*.log
