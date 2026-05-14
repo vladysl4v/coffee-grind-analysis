@@ -75,6 +75,13 @@ src/
     transforms.py                   ← full augmentation pipeline
     __init__.py
     data_augmentation_demo.ipynb    ← visual demo and offline dataset generation
+  conformal/                        ← split conformal regression (eval only)
+    README.md
+    constants.py
+    pipeline.py
+    split.py
+    metrics.py
+    visualize.py
   models/
     simple_cnn.py
     resnet.py                       ← ResNet-18 and ResNet-152
@@ -83,6 +90,8 @@ src/
     convnext.py                     ← ConvNeXt-Small and ConvNeXt-Base
     vit.py                          ← ViT-Base
     vit_large.py                    ← ViT-Large
+
+  run_conformal.py                  ← split conformal regression evaluation (see conformal/README.md)
 
 run_all_experiments.py              ← run the full experiment grid (see TRAINING_PLAN.md)
 run_failed_experiments.py           ← rerun FAILED entries from failed_runs.log with --batch-size 16
