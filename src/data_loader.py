@@ -8,8 +8,8 @@ from data_loader import get_loaders
 train_loader, val_loader, test_loader = get_loaders(batch_size=32)
 
 for images, labels in train_loader:
-    # images: FloatTensor [B, 3, H, W], normalised to ImageNet stats
-    # labels: FloatTensor [B]  (fineness value)
+    # images: FloatTensor [B, 3, H, W], normalised with dataset-specific stats
+    # labels: FloatTensor [B]  (fineness value in [0, 1])
     ...
 """
 
@@ -27,6 +27,10 @@ _RAW_IMAGES_DIR  = _ROOT / "data" / "images" / "raw"
 _AUG_IMAGES_DIR  = _ROOT / "data" / "images" / "augmented_segmentation"
 _RAW_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_raw"
 _LABELS_DIR      = _ROOT / "data" / "labels"
+
+# Default train pipeline: deterministic crop + dataset normalisation only.
+# Stochastic augmentations for ``--online-augment`` live in ``augmentation.transforms``
+# (``ApplyAugmentation`` / ``AugmentationConfig``).
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
@@ -100,7 +104,7 @@ class CoffeeDataset(Dataset):
         if not img_path.exists():
             raise FileNotFoundError(
                 f"Image not found: {img_path}\n"
-                f"Place all images in {_IMAGES_DIR}"
+                f"Expected images under {self._images_dir} (see README: raw vs segmentation vs augmented paths)."
             )
         image = Image.open(img_path).convert("RGB")
 
