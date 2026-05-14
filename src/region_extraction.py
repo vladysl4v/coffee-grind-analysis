@@ -10,12 +10,17 @@ def _find_first_nonzero(img, axis):
 
 
 def get_mask(img):
+    """Colour-direction mask for brown coffee grains; works for any H×W."""
+    h, w = img.shape[:2]
     reshaped = img.reshape(-1, 3)
     color = np.array([160, 82, 45]).reshape(3, 1)  # setup for a brown color
     color_norm = (color / np.linalg.norm(color, axis=0, keepdims=True))
     closeness = (reshaped / np.linalg.norm(reshaped, axis=1, keepdims=True)) @ color_norm
-    closeness_blurred = (closeness.reshape(1080, 1080) > closeness.mean()).astype("float")
-    closeness_blurred = uniform_filter(closeness_blurred, 62)
+    plane = closeness.reshape(h, w)
+    closeness_blurred = (plane > plane.mean()).astype("float")
+    # ~same relative blur as legacy 62 on 1080px; bounded for small images
+    k = max(3, min(62, h // 18, w // 18))
+    closeness_blurred = uniform_filter(closeness_blurred, size=k)
     return closeness_blurred[..., None] > 0.95
 
 
