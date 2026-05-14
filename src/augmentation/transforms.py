@@ -41,45 +41,49 @@ _MAX_SEED = 2**63 - 1
 
 @dataclass(frozen=True)
 class AugmentationConfig:
-    """Probability and intensity settings for coffee image augmentation."""
+    """Probability and intensity settings for coffee image augmentation.
+
+    Defaults favour fineness regression: preserve particle texture and layout
+    cues; avoid strong geometric warps and texture-destroying corruptions.
+    """
 
     horizontal_flip_prob: float = 0.50
-    vertical_flip_prob: float = 0.15
+    vertical_flip_prob: float = 0.05
 
-    zoom_prob: float = 0.60
-    zoom_scale_range: tuple[float, float] = (0.85, 1.00)
+    zoom_prob: float = 0.55
+    zoom_scale_range: tuple[float, float] = (0.88, 1.00)
 
-    rotation_prob: float = 0.80
-    rotation_degrees: float = 12.0  # <45
+    rotation_prob: float = 0.70
+    rotation_degrees: float = 6.0
 
-    affine_prob: float = 0.80
-    affine_translate: float = 0.05
-    affine_scale_range: tuple[float, float] = (0.92, 1.08)
-    affine_shear_degrees: float = 8.0
+    affine_prob: float = 0.55
+    affine_translate: float = 0.04
+    affine_scale_range: tuple[float, float] = (0.96, 1.04)
+    affine_shear_degrees: float = 3.0
 
-    perspective_prob: float = 0.25
-    perspective_scale: float = 0.18
+    perspective_prob: float = 0.0
+    perspective_scale: float = 0.12
 
-    brightness_prob: float = 0.80
-    brightness_range: tuple[float, float] = (0.85, 1.15)
+    brightness_prob: float = 0.60
+    brightness_range: tuple[float, float] = (0.90, 1.10)
 
-    contrast_prob: float = 0.80
-    contrast_range: tuple[float, float] = (0.85, 1.15)
+    contrast_prob: float = 0.60
+    contrast_range: tuple[float, float] = (0.90, 1.10)
 
-    saturation_prob: float = 0.25
-    saturation_range: tuple[float, float] = (0.95, 1.05)
+    saturation_prob: float = 0.20
+    saturation_range: tuple[float, float] = (0.96, 1.04)
 
-    sharpness_prob: float = 0.35
-    sharpness_range: tuple[float, float] = (0.70, 1.40)
+    sharpness_prob: float = 0.40
+    sharpness_range: tuple[float, float] = (0.85, 1.20)
 
-    blur_prob: float = 0.25
-    blur_radius_range: tuple[float, float] = (0.20, 1.20)
+    blur_prob: float = 0.08
+    blur_radius_range: tuple[float, float] = (0.15, 0.55)
 
-    noise_prob: float = 0.25
-    noise_std_range: tuple[float, float] = (0.005, 0.020)
+    noise_prob: float = 0.15
+    noise_std_range: tuple[float, float] = (0.004, 0.012)
 
-    jpeg_prob: float = 0.15
-    jpeg_quality_range: tuple[int, int] = (55, 95)
+    jpeg_prob: float = 0.0
+    jpeg_quality_range: tuple[int, int] = (70, 95)
 
     cutout_prob: float = 0.0  # not sure if we really need it, so zero for now
     cutout_fraction_range: tuple[float, float] = (0.03, 0.10)
