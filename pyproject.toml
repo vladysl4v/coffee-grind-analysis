@@ -15,7 +15,8 @@ dependencies = [
     "pywavelets",
     "timm>=1.0.26",
     "torch",
-    "torchvision"
+    "torchvision",
+    "scipy",
 ]
 
 # ONLY PyTorch index defined (no global override)

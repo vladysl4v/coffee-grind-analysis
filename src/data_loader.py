@@ -28,9 +28,12 @@ from numerical_features import (
     get_normalized_gray_crop,
 )
 
-_ROOT       = Path(__file__).parent.parent
-_IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
-_LABELS_DIR = _ROOT / "data" / "labels"
+_ROOT            = Path(__file__).parent.parent
+_IMAGES_DIR      = _ROOT / "data" / "images" / "segmentation"
+_RAW_IMAGES_DIR  = _ROOT / "data" / "images" / "raw"
+_AUG_IMAGES_DIR  = _ROOT / "data" / "images" / "augmented_segmentation"
+_RAW_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_raw"
+_LABELS_DIR      = _ROOT / "data" / "labels"
 _FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
 
 _CSV = {
@@ -39,17 +42,26 @@ _CSV = {
     "test":  _LABELS_DIR / "test.csv",
 }
 
-# ImageNet normalisation — sensible default for pretrained backbones
+_AUG_CSV = {
+    "train": _LABELS_DIR / "augmented_train.csv",
+    "val":   _LABELS_DIR / "val.csv",
+    "test":  _LABELS_DIR / "test.csv",
+}
+
+_RAW_AUG_CSV = {
+    "train": _LABELS_DIR / "augmented_raw_train.csv",
+    "val":   _LABELS_DIR / "val.csv",
+    "test":  _LABELS_DIR / "test.csv",
+}
+
+# Dataset-specific normalisation computed over the training set
 _NORMALIZE = transforms.Normalize(
-    mean=[0.485, 0.456, 0.406],
-    std =[0.229, 0.224, 0.225],
+    mean=[0.1557, 0.0899, 0.0404],
+    std =[0.0483, 0.0349, 0.0190],
 )
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
     transforms.CenterCrop(224),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.RandomVerticalFlip(p=0.5),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1),
     transforms.ToTensor(),
     _NORMALIZE,
 ])
@@ -60,10 +72,15 @@ DEFAULT_EVAL_TRANSFORM = transforms.Compose([
     _NORMALIZE,
 ])
 
+_NORMALIZE_IMAGENET = transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std =[0.229, 0.224, 0.225],
+)
+
 DEFAULT_FEATURE_MODEL_TRANSFORM = transforms.Compose([
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    _NORMALIZE,
+    _NORMALIZE_IMAGENET,
 ])
 
 
@@ -77,11 +94,13 @@ class CoffeeDataset(Dataset):
                Pass None to get raw PIL images.
     """
 
-    def __init__(self, split: str, transform=None):
-        if split not in _CSV:
-            raise ValueError(f"split must be one of {list(_CSV)}, got {split!r}")
+    def __init__(self, split: str, transform=None, csv_map=None, images_dir=None):
+        csv_map = csv_map or _CSV
+        if split not in csv_map:
+            raise ValueError(f"split must be one of {list(csv_map)}, got {split!r}")
 
-        csv_path = _CSV[split]
+        self._images_dir = images_dir or _IMAGES_DIR
+        csv_path = csv_map[split]
         if not csv_path.exists():
             raise FileNotFoundError(
                 f"{csv_path} not found — run src/split_labels.py first."
@@ -96,7 +115,7 @@ class CoffeeDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        img_path = _IMAGES_DIR / self.samples[idx]
+        img_path = self._images_dir / self.samples[idx]
         if not img_path.exists():
             raise FileNotFoundError(
                 f"Image not found: {img_path}\n"
@@ -214,6 +233,10 @@ def get_loaders(
     num_workers: int = 4,
     train_transform=None,
     eval_transform=None,
+    use_augmented_data: bool = False,
+    use_augmented_raw: bool = False,
+    use_raw: bool = False,
+    worker_init_fn=None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Return (train_loader, val_loader, test_loader).
 
@@ -226,28 +249,41 @@ def get_loaders(
     """
     t_train = train_transform or DEFAULT_TRAIN_TRANSFORM
     t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
+    if use_augmented_raw:
+        csv_map = _RAW_AUG_CSV
+        img_dir = _RAW_AUG_IMAGES_DIR
+    elif use_augmented_data:
+        csv_map = _AUG_CSV
+        img_dir = _AUG_IMAGES_DIR
+    elif use_raw:
+        csv_map = _CSV
+        img_dir = _RAW_IMAGES_DIR
+    else:
+        csv_map = _CSV
+        img_dir = _IMAGES_DIR
 
     _loader_kwargs = dict(
         num_workers=num_workers,
         pin_memory=True,
         persistent_workers=num_workers > 0,
         prefetch_factor=4 if num_workers > 0 else None,
+        multiprocessing_context="spawn" if num_workers > 0 else None,
     )
     train_loader = DataLoader(
-        CoffeeDataset("train", transform=t_train),
+        CoffeeDataset("train", transform=t_train, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=True,
-        drop_last=True,
+        worker_init_fn=worker_init_fn,
         **_loader_kwargs,
     )
     val_loader = DataLoader(
-        CoffeeDataset("val", transform=t_eval),
+        CoffeeDataset("val", transform=t_eval, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=False,
         **_loader_kwargs,
     )
     test_loader = DataLoader(
-        CoffeeDataset("test", transform=t_eval),
+        CoffeeDataset("test", transform=t_eval, csv_map=csv_map, images_dir=img_dir),
         batch_size=batch_size,
         shuffle=False,
         **_loader_kwargs,
@@ -294,6 +330,7 @@ def get_numerical_feature_loaders(
         pin_memory=True,
         persistent_workers=num_workers > 0,
         prefetch_factor=4 if num_workers > 0 else None,
+        multiprocessing_context="spawn" if num_workers > 0 else None,
     )
     train_loader = DataLoader(
         train_dataset,

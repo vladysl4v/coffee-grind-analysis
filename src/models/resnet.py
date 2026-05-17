@@ -3,7 +3,7 @@ from torchvision import models
 
 
 def get_resnet152(freeze_backbone: bool = True) -> nn.Module:
-    """ResNet18 pretrained on ImageNet with a single regression output.
+    """ResNet152 pretrained on ImageNet with a single regression output.
 
     Parameters
     ----------

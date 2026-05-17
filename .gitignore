@@ -9,7 +9,16 @@ wheels/
 # Virtual environments
 .venv
 *.png
-labels_train2.csv
+
+# Label CSVs — only the fixed splits are tracked
+data/labels/*.csv
+!data/labels/train.csv
+!data/labels/val.csv
+!data/labels/test.csv
+
+# Precomputed numerical features — generate locally with precompute_numerical_features.py
+data/features/numerical/*.csv
 
 # Training runs
 data/runs/
+*.log
