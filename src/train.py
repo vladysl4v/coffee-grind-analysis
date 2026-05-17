@@ -30,6 +30,7 @@ from models.convnext import get_convnext_small, get_convnext_base
 from models.vit import get_vit
 from models.vit_large import get_vit_large
 from models.resnext import get_resnext50
+from models.fpn_resnet import FPNResnet18
 from pathlib import Path
 
 
@@ -46,6 +47,7 @@ MODELS = {
     "efficientnet_b0": lambda args: get_efficientnet_b0(freeze_backbone=not args.unfreeze),
     "convnext_small":  lambda args: get_convnext_small(freeze_backbone=not args.unfreeze),
     "convnext_base":   lambda args: get_convnext_base(freeze_backbone=not args.unfreeze),
+    "fpn_resnet": lambda args: FPNResnet18(freeze_backbone=not args.unfreeze),
 }
 
 
