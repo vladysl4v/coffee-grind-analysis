@@ -91,6 +91,21 @@ class AugmentationConfig:
 
     preserve_size: bool = True
 
+    @classmethod
+    def geometric_only(cls) -> AugmentationConfig:
+        """Flips, zoom, rotation, affine only — no photometric or texture corruption."""
+
+        return cls(
+            brightness_prob=0.0,
+            contrast_prob=0.0,
+            saturation_prob=0.0,
+            sharpness_prob=0.0,
+            blur_prob=0.0,
+            noise_prob=0.0,
+            jpeg_prob=0.0,
+            perspective_prob=0.0,
+        )
+
 
 @dataclass(frozen=True)
 class AugmentedResult:
