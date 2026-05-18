@@ -20,7 +20,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-from data_loader import get_loaders, DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, _NORMALIZE, _RAW_IMAGES_DIR
+from data_loader import (
+    build_normalize,
+    get_loaders,
+    DEFAULT_TRAIN_TRANSFORM,
+    DEFAULT_EVAL_TRANSFORM,
+    MASK_CROP,
+    _RAW_IMAGES_DIR,
+)
 from augmentation import ApplyAugmentation, seed_worker
 from torchvision import transforms as T
 from models.simple_cnn import SimpleCNN
@@ -102,6 +109,10 @@ def parse_args():
                         help="Huber loss delta threshold (default: 0.1)")
     parser.add_argument("--early-stop-patience", type=int, default=20, metavar="N",
                         help="stop training if val MAE does not improve for N epochs (default: 20, 0 = disabled)")
+    parser.add_argument("--skip-conformal", action="store_true",
+                        help="do not run split conformal evaluation after training stops")
+    parser.add_argument("--conformal-alpha", type=float, default=0.10, metavar="A",
+                        help="miscoverage level for post-training conformal eval (default: 0.1)")
     return parser.parse_args()
 
 
@@ -124,9 +135,13 @@ def main():
     if args.online_augment:
         train_transform = T.Compose([
             ApplyAugmentation(),
-            T.CenterCrop(224),
+            MASK_CROP,
             T.ToTensor(),
-            _NORMALIZE,
+            build_normalize(
+                use_augmented_data=args.augmented_data,
+                use_augmented_raw=args.augmented_raw_precomputed,
+                use_raw=args.raw or args.online_augment,
+            ),
         ])
     else:
         train_transform = DEFAULT_TRAIN_TRANSFORM
@@ -158,7 +173,10 @@ def main():
     train_mse, val_mse = [], []
     train_mae, val_mae = [], []
     best_val_mae = float("inf")
+    best_epoch = 0
+    last_epoch = 0
     early_stop_counter = 0
+    stopped_early = False
 
     config = {
         "model": args.model,
@@ -191,88 +209,137 @@ def main():
     with open(metrics_path, "w", newline="") as f:
         csv.writer(f).writerow(["epoch", f"train_{loss_col}", "train_mae", f"val_{loss_col}", "val_mae"])
 
-    for epoch in range(1, args.epochs + 1):
-        if args.unfreeze_after is not None and epoch == args.unfreeze_after + 1:
-            for param in model.parameters():
-                param.requires_grad = True
-            backbone_params = [p for p in model.parameters() if not any(p is hp for hp in optimizer.param_groups[0]["params"])]
-            optimizer.add_param_group({"params": backbone_params, "lr": args.lr / 10, "weight_decay": 1e-4})
-            scheduler = (
-                optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - epoch, eta_min=1e-6)
-                if args.cosine_lr else
-                optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
-            )
-            print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
+    try:
+        for epoch in range(1, args.epochs + 1):
+            last_epoch = epoch
+            if args.unfreeze_after is not None and epoch == args.unfreeze_after + 1:
+                for param in model.parameters():
+                    param.requires_grad = True
+                backbone_params = [
+                    p for p in model.parameters()
+                    if not any(p is hp for hp in optimizer.param_groups[0]["params"])
+                ]
+                optimizer.add_param_group({"params": backbone_params, "lr": args.lr / 10, "weight_decay": 1e-4})
+                scheduler = (
+                    optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - epoch + 1, eta_min=1e-6)
+                    if args.cosine_lr else
+                    optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+                )
+                print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
 
-        model.train()
-        acc_mse = torch.zeros(1, device=device)
-        acc_mae = torch.zeros(1, device=device)
-        for images, labels in train_loader:
-            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-
-            if args.adversarial:
-                images_adv = _fgsm_perturb(images, labels, model, criterion, args.adv_epsilon, device)
-            optimizer.zero_grad()
-
-            if args.adversarial:
-                with autocast(device_type=device.type):
-                    preds_clean = model(images).view(-1)
-                    loss_clean = criterion(preds_clean, labels)
-                    preds_adv = model(images_adv).view(-1)
-                    loss_adv = criterion(preds_adv, labels)
-                loss = (1 - args.adv_weight) * loss_clean + args.adv_weight * loss_adv
-                preds = preds_clean
-            else:
-                with autocast(device_type=device.type):
-                    preds = model(images).view(-1)
-                    loss = criterion(preds, labels)
-
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            with torch.no_grad():
-                acc_mse += loss.detach()
-                acc_mae += (preds.detach() - labels).abs().mean()
-        train_mse.append((acc_mse / len(train_loader)).item())
-        train_mae.append((acc_mae / len(train_loader)).item())
-
-        model.eval()
-        acc_mse = torch.zeros(1, device=device)
-        acc_mae = torch.zeros(1, device=device)
-        with torch.no_grad():
-            for images, labels in val_loader:
+            model.train()
+            acc_mse = torch.zeros(1, device=device)
+            acc_mae = torch.zeros(1, device=device)
+            for images, labels in train_loader:
                 images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-                with autocast(device_type=device.type):
-                    preds = model(images).view(-1)
-                    acc_mse += criterion(preds, labels)
-                acc_mae += (preds - labels).abs().mean()
-        val_mse.append((acc_mse / len(val_loader)).item())
-        val_mae.append((acc_mae / len(val_loader)).item())
 
-        scheduler.step() if args.cosine_lr else scheduler.step(val_mse[-1])
+                if args.adversarial:
+                    images_adv = _fgsm_perturb(images, labels, model, criterion, args.adv_epsilon, device)
+                optimizer.zero_grad()
 
-        if val_mae[-1] < best_val_mae:
-            best_val_mae = val_mae[-1]
-            early_stop_counter = 0
-        else:
-            early_stop_counter += 1
+                if args.adversarial:
+                    with autocast(device_type=device.type):
+                        preds_clean = model(images).view(-1)
+                        loss_clean = criterion(preds_clean, labels)
+                        preds_adv = model(images_adv).view(-1)
+                        loss_adv = criterion(preds_adv, labels)
+                    loss = (1 - args.adv_weight) * loss_clean + args.adv_weight * loss_adv
+                    preds = preds_clean
+                else:
+                    with autocast(device_type=device.type):
+                        preds = model(images).view(-1)
+                        loss = criterion(preds, labels)
 
-        print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+                with torch.no_grad():
+                    acc_mse += loss.detach()
+                    acc_mae += (preds.detach() - labels).abs().mean()
+            train_mse.append((acc_mse / len(train_loader)).item())
+            train_mae.append((acc_mae / len(train_loader)).item())
 
-        if args.early_stop_patience > 0 and early_stop_counter >= args.early_stop_patience:
-            print(f"Early stopping at epoch {epoch}: val MAE did not improve for {args.early_stop_patience} epochs (best={best_val_mae*100:.2f}).")
-            break
+            model.eval()
+            acc_mse = torch.zeros(1, device=device)
+            acc_mae = torch.zeros(1, device=device)
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+                    with autocast(device_type=device.type):
+                        preds = model(images).view(-1)
+                        acc_mse += criterion(preds, labels)
+                    acc_mae += (preds - labels).abs().mean()
+            val_mse.append((acc_mse / len(val_loader)).item())
+            val_mae.append((acc_mae / len(val_loader)).item())
 
-        with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
+            scheduler.step() if args.cosine_lr else scheduler.step(val_mse[-1])
 
-        loss_label = f"Huber Loss (δ={args.huber_delta})" if args.huber else "MSE Loss"
-        _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png")
-        _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
+            if val_mae[-1] < best_val_mae:
+                best_val_mae = val_mae[-1]
+                best_epoch = epoch
+                early_stop_counter = 0
+                torch.save(model.state_dict(), models_dir / "best.pt")
+            else:
+                early_stop_counter += 1
 
-        if epoch % 5 == 0:
-            torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
-            _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
+            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
+
+            if args.early_stop_patience > 0 and early_stop_counter >= args.early_stop_patience:
+                print(f"Early stopping at epoch {epoch}: val MAE did not improve for {args.early_stop_patience} epochs (best={best_val_mae*100:.2f}).")
+                stopped_early = True
+                break
+
+            with open(metrics_path, "a", newline="") as f:
+                csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
+
+            loss_label = f"Huber Loss (δ={args.huber_delta})" if args.huber else "MSE Loss"
+            _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png")
+            _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
+
+            if epoch % 5 == 0:
+                torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
+                _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
+    finally:
+        training_state = {
+            "last_epoch": last_epoch,
+            "best_epoch": best_epoch,
+            "best_val_mae": best_val_mae,
+            "stopped_early": stopped_early,
+            "best_checkpoint": "models/best.pt" if (models_dir / "best.pt").is_file() else None,
+        }
+        with open(run_dir / "training_state.json", "w", encoding="utf-8") as f:
+            json.dump(training_state, f, indent=2)
+        if last_epoch > 0:
+            torch.save(model.state_dict(), models_dir / f"epoch_{last_epoch:03d}.pt")
+        _run_post_training_conformal(args, run_dir, device)
+
+
+def _run_post_training_conformal(args, run_dir: Path, device: torch.device) -> None:
+    if args.skip_conformal:
+        print("Skipping conformal evaluation (--skip-conformal).")
+        return
+    if args.model != "convnext_small":
+        print(f"Conformal auto-eval supports convnext_small only; got {args.model!r}. Skipping.")
+        return
+    if not (run_dir / "models").is_dir():
+        print("No checkpoints saved — skipping conformal evaluation.")
+        return
+
+    print("Running split conformal evaluation →", (run_dir / "conformal").as_posix())
+    try:
+        from conformal.evaluate import evaluate_and_save, resolve_eval_checkpoint
+
+        ckpt = resolve_eval_checkpoint(run_dir)
+        evaluate_and_save(
+            run_dir,
+            checkpoint=ckpt,
+            alpha=args.conformal_alpha,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            skip_baseline_assert=True,
+        )
+    except Exception as exc:
+        print(f"Conformal evaluation failed: {exc}")
 
 
 def _fgsm_perturb(images, labels, model, criterion, epsilon, device):

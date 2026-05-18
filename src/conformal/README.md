@@ -49,7 +49,7 @@ uv run python src/run_conformal.py --run-dir data/runs/convnext_small/run_001 --
 uv run python src/run_conformal.py --run-dir data/runs/convnext_small/run_001 --augmented-data
 ```
 
-Outputs (default `--output-dir data/runs/conformal_eval`):
+Outputs are written to **``<run_dir>/conformal/``** (e.g. ``data/runs/convnext_small/run_005/conformal/``). After training, ``train.py`` runs this step automatically unless ``--skip-conformal``.
 
 - `conformal_report.json` — primary numbers are **Fineness** (0–100 style values as in CSVs).
 - `conformal_test_errorbars.png` — first test samples: interval hits/misses in colour.

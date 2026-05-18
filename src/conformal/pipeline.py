@@ -17,7 +17,7 @@ from .constants import FINENESS_SCALE
 from .metrics import conformal_metrics, point_metrics
 from .split import SplitConformalRegressor
 
-from data_loader import CoffeeDataset, DEFAULT_EVAL_TRANSFORM, _CSV, _IMAGES_DIR
+from data_loader import CoffeeDataset, _CSV, _IMAGES_DIR
 from models.convnext import get_convnext_small
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,19 @@ def make_eval_loader(
     else:
         csv_map, img_dir = _CSV, _IMAGES_DIR
 
-    ds = CoffeeDataset(split, transform=DEFAULT_EVAL_TRANSFORM, csv_map=csv_map, images_dir=img_dir)
+    from data_loader import MASK_CROP, build_normalize
+    from torchvision import transforms
+
+    eval_transform = transforms.Compose([
+        MASK_CROP,
+        transforms.ToTensor(),
+        build_normalize(
+            use_augmented_data=use_augmented_data,
+            use_augmented_raw=use_augmented_raw,
+            use_raw=use_raw,
+        ),
+    ])
+    ds = CoffeeDataset(split, transform=eval_transform, csv_map=csv_map, images_dir=img_dir)
     cuda = torch.cuda.is_available()
     kwargs: dict[str, Any] = dict(
         num_workers=num_workers,
@@ -306,11 +318,8 @@ def run_split_conformal_eval(
         if not out_path.is_absolute():
             out_path = (root / out_path).resolve()
         out_path.mkdir(parents=True, exist_ok=True)
-        report_path = out_path / "conformal_report.json"
-        report_payload = {k: v for k, v in out.items() if k != "_arrays_for_plot"}
-        report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
-        out["saved_report"] = str(report_path)
-        logger.info("Wrote report %s", report_path)
+        out["conformal_dir"] = str(out_path)
+        logger.info("Conformal output directory %s", out_path)
 
     out["_arrays_for_plot"] = {
         "y_test": y_test,
