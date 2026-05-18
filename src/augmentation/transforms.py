@@ -46,18 +46,18 @@ class AugmentationConfig:
     horizontal_flip_prob: float = 0.50
     vertical_flip_prob: float = 0.15
 
-    zoom_prob: float = 0.60
+    zoom_prob: float = 0.0
     zoom_scale_range: tuple[float, float] = (0.85, 1.00)
 
-    rotation_prob: float = 0.80
+    rotation_prob: float = 0.0
     rotation_degrees: float = 12.0  # <45
 
-    affine_prob: float = 0.80
+    affine_prob: float = 0.0
     affine_translate: float = 0.05
     affine_scale_range: tuple[float, float] = (0.92, 1.08)
     affine_shear_degrees: float = 8.0
 
-    perspective_prob: float = 0.25
+    perspective_prob: float = 0.0
     perspective_scale: float = 0.18
 
     brightness_prob: float = 0.80
@@ -70,15 +70,15 @@ class AugmentationConfig:
     saturation_range: tuple[float, float] = (0.95, 1.05)
 
     sharpness_prob: float = 0.35
-    sharpness_range: tuple[float, float] = (0.70, 1.40)
+    sharpness_range: tuple[float, float] = (0.80, 1.20)
 
-    blur_prob: float = 0.25
+    blur_prob: float = 0.0
     blur_radius_range: tuple[float, float] = (0.20, 1.20)
 
-    noise_prob: float = 0.25
+    noise_prob: float = 0.1
     noise_std_range: tuple[float, float] = (0.005, 0.020)
 
-    jpeg_prob: float = 0.15
+    jpeg_prob: float = 0.0
     jpeg_quality_range: tuple[int, int] = (55, 95)
 
     cutout_prob: float = 0.0  # not sure if we really need it, so zero for now
