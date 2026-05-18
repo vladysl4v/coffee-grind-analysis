@@ -22,13 +22,14 @@ import numpy as np
 
 from data_loader import (
     get_loaders, get_numerical_feature_loaders,
-    DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, _NORMALIZE, _RAW_IMAGES_DIR
+    DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, _NORMALIZE,
 )
 from augmentation import ApplyAugmentation, seed_worker
 from torchvision import transforms as T
 from models.simple_cnn import SimpleCNN
 from models.numerical_features_plus_cnn import NumericalFeaturesPlusCNN
 from models.numerical_features_plus_efficientnet import NumericalFeaturesPlusEfficientNetB0
+from models.numerical_features_plus_convnext import NumericalFeaturesPlusConvNeXtSmall
 from models.resnet import get_resnet152, get_resnet18
 from models.efficientnet import get_efficientnet_b0
 from models.convnext import get_convnext_small, get_convnext_base
@@ -50,9 +51,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -62,9 +61,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -74,9 +71,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -86,9 +81,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -98,9 +91,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -110,9 +101,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -122,9 +111,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -134,9 +121,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -146,9 +131,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_data=args.augmented_data,
             use_augmented_raw=args.augmented_raw_precomputed,
-            use_raw=args.raw or args.online_augment,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -158,6 +141,8 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             image_mode="gray",
+            augmentation=ApplyAugmentation() if args.online_augment else None,
+            worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
     "numerical_features_plus_efficientnet_b0": {
@@ -169,6 +154,21 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             image_mode="rgb",
+            augmentation=ApplyAugmentation() if args.online_augment else None,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "numerical_features_plus_convnext_small": {
+        "builder": lambda args: NumericalFeaturesPlusConvNeXtSmall(
+            NUM_NUMERICAL_FEATURES,
+            freeze_backbone=not args.unfreeze,
+        ),
+        "loaders": lambda args: get_numerical_feature_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            image_mode="rgb",
+            augmentation=ApplyAugmentation() if args.online_augment else None,
+            worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
 }
@@ -205,14 +205,10 @@ def parse_args():
                         help="train with backbone fully unfrozen from epoch 1")
     parser.add_argument("--unfreeze-after", type=int, default=None, metavar="N",
                         help="unfreeze backbone after N epochs and fine-tune at lr/10 (overrides --unfreeze)")
-    parser.add_argument("--augmented-data", action="store_true",
-                        help="use augmented_segmentation/ images and augmented_train.csv (run precompute_augmented_segmentation.py first)")
     parser.add_argument("--augmented-raw-precomputed", action="store_true",
                         help="use augmented_raw/ images and augmented_raw_train.csv (run precompute_augmented_segmentation.py --raw-output first)")
     parser.add_argument("--online-augment", action="store_true",
                         help="apply full augmentation pipeline live on raw images every epoch (no precomputation needed)")
-    parser.add_argument("--raw", action="store_true",
-                        help="train on raw (unsegmented) images")
     parser.add_argument("--adversarial", action="store_true",
                         help="enable FGSM adversarial training (mixes clean and perturbed batches)")
     parser.add_argument("--adv-epsilon", type=float, default=0.01, metavar="EPS",
@@ -288,9 +284,7 @@ def main():
         "batch_size": args.batch_size,
         "unfreeze": args.unfreeze,
         "unfreeze_after": args.unfreeze_after,
-        "augmented_data": args.augmented_data,
         "augmented_raw_precomputed": args.augmented_raw_precomputed,
-        "raw": args.raw,
         "online_augment": args.online_augment,
         "loss": f"huber(delta={args.huber_delta})" if args.huber else "mse",
         "optimizer": "adamw" if args.adamw else "adam",

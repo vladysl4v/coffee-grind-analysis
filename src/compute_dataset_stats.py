@@ -4,15 +4,13 @@ Compute per-channel mean and std over the training set (pre-normalization).
 Usage
 -----
 uv run python src/compute_dataset_stats.py
-uv run python src/compute_dataset_stats.py --raw
 """
 
-import argparse
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from data_loader import CoffeeDataset, _RAW_IMAGES_DIR
+from data_loader import CoffeeDataset
 
 _TRANSFORM = transforms.Compose([
     transforms.CenterCrop(224),
@@ -20,17 +18,8 @@ _TRANSFORM = transforms.Compose([
 ])
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--raw", action="store_true",
-                        help="compute stats over raw (unsegmented) images")
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
-    images_dir = _RAW_IMAGES_DIR if args.raw else None
-    dataset = CoffeeDataset("train", transform=_TRANSFORM, images_dir=images_dir)
+    dataset = CoffeeDataset("train", transform=_TRANSFORM)
     loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=False)
 
     mean = torch.zeros(3)

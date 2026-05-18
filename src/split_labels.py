@@ -62,10 +62,10 @@ def parse_args():
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--source", choices=IMG_DIRS.keys(), default="segmentation",
+    parser.add_argument("--source", choices=IMG_DIRS.keys(), default="raw",
                         help="image source for quality filtering:\n"
-                             "  segmentation — use background-masked images (recommended)\n"
-                             "  raw          — use original images (default: segmentation)")
+                             "  raw          — use original images (default)\n"
+                             "  segmentation — use background-masked images")
     return parser.parse_args()
 
 

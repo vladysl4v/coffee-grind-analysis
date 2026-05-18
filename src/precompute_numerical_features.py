@@ -8,7 +8,7 @@ from numerical_features import FEATURE_NAMES, extract_numerical_features
 
 
 _ROOT = Path(__file__).parent.parent
-_IMAGES_DIR = _ROOT / "data" / "images" / "segmentation"
+_IMAGES_DIR = _ROOT / "data" / "images" / "raw"
 _LABELS_DIR = _ROOT / "data" / "labels"
 _FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
 

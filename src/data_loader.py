@@ -29,21 +29,13 @@ from numerical_features import (
 )
 
 _ROOT            = Path(__file__).parent.parent
-_IMAGES_DIR      = _ROOT / "data" / "images" / "segmentation"
-_RAW_IMAGES_DIR  = _ROOT / "data" / "images" / "raw"
-_AUG_IMAGES_DIR  = _ROOT / "data" / "images" / "augmented_segmentation"
+_IMAGES_DIR         = _ROOT / "data" / "images" / "raw"
 _RAW_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_raw"
 _LABELS_DIR      = _ROOT / "data" / "labels"
 _FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
-    "val":   _LABELS_DIR / "val.csv",
-    "test":  _LABELS_DIR / "test.csv",
-}
-
-_AUG_CSV = {
-    "train": _LABELS_DIR / "augmented_train.csv",
     "val":   _LABELS_DIR / "val.csv",
     "test":  _LABELS_DIR / "test.csv",
 }
@@ -136,6 +128,7 @@ class NumericalFeatureCoffeeDataset(CoffeeDataset):
         split: str,
         image_mode: str = "rgb",
         transform=None,
+        augmentation=None,
         feature_mean: np.ndarray | None = None,
         feature_std: np.ndarray | None = None,
     ):
@@ -146,6 +139,7 @@ class NumericalFeatureCoffeeDataset(CoffeeDataset):
 
         self.image_mode = image_mode
         self.image_transform = transform
+        self.augmentation = augmentation
         self.feature_mean = feature_mean
         self.feature_std = feature_std
         self._feature_cache: dict[int, np.ndarray] = {}
@@ -217,9 +211,15 @@ class NumericalFeatureCoffeeDataset(CoffeeDataset):
 
     def __getitem__(self, idx: int):
         image = self._load_image(idx)
+
+        if self.augmentation is not None:
+            image = self.augmentation(image)
+            features = extract_numerical_features(image).astype(np.float32)
+        else:
+            features = self._feature_vector(idx, image=image).copy()
+
         image_tensor = self._image_tensor(image)
 
-        features = self._feature_vector(idx, image=image).copy()
         if self.feature_mean is not None and self.feature_std is not None:
             features = (features - self.feature_mean) / self.feature_std
 
@@ -233,9 +233,7 @@ def get_loaders(
     num_workers: int = 4,
     train_transform=None,
     eval_transform=None,
-    use_augmented_data: bool = False,
     use_augmented_raw: bool = False,
-    use_raw: bool = False,
     worker_init_fn=None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Return (train_loader, val_loader, test_loader).
@@ -252,12 +250,6 @@ def get_loaders(
     if use_augmented_raw:
         csv_map = _RAW_AUG_CSV
         img_dir = _RAW_AUG_IMAGES_DIR
-    elif use_augmented_data:
-        csv_map = _AUG_CSV
-        img_dir = _AUG_IMAGES_DIR
-    elif use_raw:
-        csv_map = _CSV
-        img_dir = _RAW_IMAGES_DIR
     else:
         csv_map = _CSV
         img_dir = _IMAGES_DIR
@@ -297,6 +289,8 @@ def get_numerical_feature_loaders(
     image_mode: str = "rgb",
     train_transform=None,
     eval_transform=None,
+    augmentation=None,
+    worker_init_fn=None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     t_train = train_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
     t_eval = eval_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
@@ -305,6 +299,7 @@ def get_numerical_feature_loaders(
         "train",
         image_mode=image_mode,
         transform=t_train,
+        augmentation=augmentation,
     )
     feature_mean, feature_std = train_dataset.compute_feature_stats()
     train_dataset.feature_mean = feature_mean
@@ -337,6 +332,7 @@ def get_numerical_feature_loaders(
         batch_size=batch_size,
         shuffle=True,
         drop_last=True,
+        worker_init_fn=worker_init_fn,
         **_loader_kwargs,
     )
     val_loader = DataLoader(
