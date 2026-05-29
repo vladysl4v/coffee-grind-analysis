@@ -281,7 +281,7 @@ def _fgsm_perturb(images, labels, model, criterion, epsilon, device):
     # eval mode prevents the adversarial forward pass from corrupting BatchNorm running stats
     model.eval()
     images_adv = images.clone().detach().to(device).requires_grad_(True)
-    with autocast(device_type=device.type):
+    with autocast(device_type=device):
         preds = model(images_adv).view(-1)
         loss = criterion(preds, labels)
     loss.backward()

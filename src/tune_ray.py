@@ -32,6 +32,7 @@ def create_dataloaders(batch_size, num_workers):
     return train_loader, val_loader
 
 def train_epoch(config):
+    assert torch.cuda.is_available()
     net = FPNResnet18()
     device = config["device"]
     net.to(device)
@@ -40,7 +41,7 @@ def train_epoch(config):
     optimizer = optim.AdamW(
         [p for p in net.parameters() if p.requires_grad], lr=config["lr"], weight_decay=config["weight_decay"]
     )
-    scaler = GradScaler(device=device.type)
+    scaler = GradScaler(device="cuda")
     if tune.get_checkpoint():
         loaded_checkpoint = tune.get_checkpoint()
         with loaded_checkpoint.as_directory() as loaded_checkpoint_dir:
@@ -61,7 +62,7 @@ def train_epoch(config):
             images_adv = _fgsm_perturb(images, labels, net, criterion, config["adv_epsilon"], device)
             optimizer.zero_grad()
 
-            with autocast(device_type=device.type):
+            with autocast(device_type=device):
                 preds_clean = net(images).view(-1)
                 loss_clean = criterion(preds_clean, labels)
                 preds_adv = net(images_adv).view(-1)
@@ -82,14 +83,14 @@ def train_epoch(config):
         with torch.no_grad():
             for images, labels in val_loader:
                 images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-                with autocast(device_type=device.type):
+                with autocast(device_type=device):
                     preds = net(images).view(-1)
                     acc_mse += criterion(preds, labels)
                 acc_mae += (preds - labels).abs().mean()
 
         metrics = {
-            "acc_mae": acc_mae / len(val_loader),
-            "acc_mse": acc_mse / len(val_loader),
+            "acc_mae": acc_mae.item() / len(val_loader),
+            "acc_mse": acc_mse.item() / len(val_loader),
         }
 
         with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
@@ -114,7 +115,7 @@ def test_best_model(best_result, smoke_test=False):
 
     _, _, testloader = get_loaders(
         batch_size=best_result.config["batch_size"],
-        num_workers=best_result.config["num_workers"] )
+        num_workers=0)
 
     criterion = nn.HuberLoss(delta=best_result.config["huber_delta"])
     acc_mse = torch.zeros(1, device=device)
@@ -123,7 +124,7 @@ def test_best_model(best_result, smoke_test=False):
     with torch.no_grad():
         for images, labels in testloader:
             images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-            with autocast(device_type=device.type):
+            with autocast(device_type=device):
                 preds = best_trained_model(images).view(-1)
                 acc_mse += criterion(preds, labels)
             acc_mae += (preds - labels).abs().mean()
@@ -153,13 +154,13 @@ def main(config, gpus_per_trial=1):
     tuner = tune.Tuner(
         tune.with_resources(
             tune.with_parameters(train_epoch),
-            resources={"cpu": 8, "gpu": 0.5}
+            resources={"cpu": 8, "gpu": 1}
         ),
         tune_config=tune.TuneConfig(
-            metric="loss",
+            metric="acc_mae",
             mode="min",
             scheduler=scheduler,
-            num_samples=1,
+            num_samples=20,
             max_concurrent_trials=0,
         ),
         param_space=config,
@@ -169,8 +170,9 @@ def main(config, gpus_per_trial=1):
     best_result = results.get_best_result("acc_mae", "min")
 
     print(f"Best trial config: {best_result.config}")
-    print(f"Best trial final validation loss: {best_result.metrics['acc_mse']}")
-    print(f"Best trial final validation accuracy: {best_result.metrics['acc_mae']}")
+    print(best_result.metrics)
+    #print(f"Best trial final validation loss: {best_result.metrics['acc_mse']}")
+    #print(f"Best trial final validation accuracy: {best_result.metrics['acc_mae']}")
 
     test_best_model(best_result)
 
