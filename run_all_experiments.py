@@ -42,18 +42,7 @@ def _variants(model, unfreeze=None, batch_size=None):
 
 # Ordered safest/smallest → largest/most likely to OOM
 EXPERIMENTS = [
-    *_variants("resnet152",        batch_size=16),          # adv variants OOM at bs=32
-    *_variants("resnet152",        unfreeze=10, batch_size=16),
-    *_variants("resnext50"),
-    *_variants("resnext50",        unfreeze=10),
-    *_variants("efficientnet_b0"),
-    *_variants("efficientnet_b0",  unfreeze=10),
-    *_variants("convnext_small"),
-    *_variants("convnext_small",   unfreeze=15, batch_size=16),  # adv OOM at unfreeze point
-    *_variants("convnext_base",    batch_size=16),
-    *_variants("vit"),
-    *_variants("vit",              unfreeze=30, batch_size=16),  # all variants failed
-    *_variants("vit_large",        batch_size=16),               # frozen only, goes last
+    *_variants("fpn_resnet",        batch_size=16)
 ]
 
 

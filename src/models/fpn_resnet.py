@@ -7,10 +7,10 @@ class FPNResnet18(nn.Module):
     def __init__(self, freeze_backbone: bool = False) -> None:
         super().__init__()
         self.backbone = timm.create_model(
-            "resnet18",
+            "convnext_small",
             pretrained=True,
             features_only=True,
-            out_indices=(1, 2, 3, 4)
+            out_indices=(0, 1, 2, 3)
         )
 
         if freeze_backbone:
@@ -21,12 +21,10 @@ class FPNResnet18(nn.Module):
             in_channels_list=self.backbone.feature_info.channels(),
             out_channels=256
         )
-        self.norms = nn.ModuleList([
-            nn.BatchNorm2d(256) for _ in self.backbone.feature_info.channels()
-        ])
 
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.head = nn.Sequential(
+            nn.LayerNorm(256),
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -40,8 +38,8 @@ class FPNResnet18(nn.Module):
         features = {str(i): f for i, f in enumerate(features)}
         fpn_feats = self.fpn(features)
         pooled = []
-        for k, norm in zip(sorted(fpn_feats.keys()), self.norms):
-            pooled.append(self.pool(norm(fpn_feats[k])).flatten(1))
+        for k in sorted(fpn_feats.keys()):
+            pooled.append(self.pool(fpn_feats[k]).flatten(1))
 
-        x = torch.stack(pooled, dim=1) * torch.softmax(self.w, dim=1).unsqueeze(-1)
-        return self.head(x.sum(dim=1))
+        #x = torch.stack(pooled, dim=1) * torch.softmax(self.w, dim=1).unsqueeze(-1)
+        return self.head(pooled[0])
