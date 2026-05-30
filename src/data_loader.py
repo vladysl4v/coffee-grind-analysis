@@ -8,11 +8,14 @@ from data_loader import get_loaders
 train_loader, val_loader, test_loader = get_loaders(batch_size=32)
 
 for images, labels in train_loader:
-    # images: FloatTensor [B, 3, H, W], normalised to ImageNet stats
-    # labels: FloatTensor [B]  (fineness value)
+    # images: FloatTensor [B, 3, H, W], normalised with dataset-specific stats
+    # labels: FloatTensor [B]  (fineness value in [0, 1])
     ...
 """
 
+from __future__ import annotations
+
+import json
 from pathlib import Path
 
 import numpy as np
@@ -47,13 +50,13 @@ _NORMALIZE = transforms.Normalize(
 )
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
-    transforms.CenterCrop(224),
+    MASK_CROP,
     transforms.ToTensor(),
     _NORMALIZE,
 ])
 
 DEFAULT_EVAL_TRANSFORM = transforms.Compose([
-    transforms.CenterCrop(224),
+    MASK_CROP,
     transforms.ToTensor(),
     _NORMALIZE,
 ])
@@ -105,7 +108,7 @@ class CoffeeDataset(Dataset):
         if not img_path.exists():
             raise FileNotFoundError(
                 f"Image not found: {img_path}\n"
-                f"Place all images in {_IMAGES_DIR}"
+                f"Expected images under {self._images_dir} (see README: raw vs segmentation vs augmented paths)."
             )
         image = Image.open(img_path).convert("RGB")
 
@@ -242,6 +245,15 @@ def get_loaders(
     t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
     csv_map = _CSV
     img_dir = _IMAGES_DIR
+
+    normalize = build_normalize(
+        use_augmented_data=use_augmented_data,
+        use_augmented_raw=use_augmented_raw,
+        use_raw=use_raw,
+    )
+    default_transform = transforms.Compose([MASK_CROP, transforms.ToTensor(), normalize])
+    t_train = train_transform or default_transform
+    t_eval = eval_transform or default_transform
 
     _loader_kwargs = dict(
         num_workers=num_workers,

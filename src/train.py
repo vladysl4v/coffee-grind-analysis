@@ -223,6 +223,10 @@ def parse_args():
                         help="Huber loss delta threshold (default: 0.1)")
     parser.add_argument("--early-stop-patience", type=int, default=20, metavar="N",
                         help="stop training if val MAE does not improve for N epochs (default: 20, 0 = disabled)")
+    parser.add_argument("--skip-conformal", action="store_true",
+                        help="do not run split conformal evaluation after training stops")
+    parser.add_argument("--conformal-alpha", type=float, default=0.10, metavar="A",
+                        help="miscoverage level for post-training conformal eval (default: 0.1)")
     return parser.parse_args()
 
 
@@ -245,9 +249,13 @@ def main():
     if args.online_augment:
         train_transform = T.Compose([
             ApplyAugmentation(),
-            T.CenterCrop(224),
+            MASK_CROP,
             T.ToTensor(),
-            _NORMALIZE,
+            build_normalize(
+                use_augmented_data=args.augmented_data,
+                use_augmented_raw=args.augmented_raw_precomputed,
+                use_raw=args.raw or args.online_augment,
+            ),
         ])
     else:
         train_transform = DEFAULT_TRAIN_TRANSFORM
@@ -272,7 +280,10 @@ def main():
     train_mse, val_mse = [], []
     train_mae, val_mae = [], []
     best_val_mae = float("inf")
+    best_epoch = 0
+    last_epoch = 0
     early_stop_counter = 0
+    stopped_early = False
 
     config = {
         "model": args.model,
@@ -347,6 +358,18 @@ def main():
         train_mse.append((acc_mse / len(train_loader)).item())
         train_mae.append((acc_mae / len(train_loader)).item())
 
+            model.eval()
+            acc_mse = torch.zeros(1, device=device)
+            acc_mae = torch.zeros(1, device=device)
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+                    with autocast(device_type=device.type):
+                        preds = model(images).view(-1)
+                        acc_mse += criterion(preds, labels)
+                    acc_mae += (preds - labels).abs().mean()
+            val_mse.append((acc_mse / len(val_loader)).item())
+            val_mae.append((acc_mae / len(val_loader)).item())
         model.eval()
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
@@ -360,8 +383,15 @@ def main():
         val_mse.append((acc_mse / len(val_loader)).item())
         val_mae.append((acc_mae / len(val_loader)).item())
 
-        scheduler.step() if args.cosine_lr else scheduler.step(val_mse[-1])
+            scheduler.step() if args.cosine_lr else scheduler.step(val_mse[-1])
 
+            if val_mae[-1] < best_val_mae:
+                best_val_mae = val_mae[-1]
+                best_epoch = epoch
+                early_stop_counter = 0
+                torch.save(model.state_dict(), models_dir / "best.pt")
+            else:
+                early_stop_counter += 1
         if val_mae[-1] < best_val_mae:
             best_val_mae = val_mae[-1]
             early_stop_counter = 0
@@ -369,18 +399,19 @@ def main():
         else:
             early_stop_counter += 1
 
-        print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
+            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
 
-        if args.early_stop_patience > 0 and early_stop_counter >= args.early_stop_patience:
-            print(f"Early stopping at epoch {epoch}: val MAE did not improve for {args.early_stop_patience} epochs (best={best_val_mae*100:.2f}).")
-            break
+            if args.early_stop_patience > 0 and early_stop_counter >= args.early_stop_patience:
+                print(f"Early stopping at epoch {epoch}: val MAE did not improve for {args.early_stop_patience} epochs (best={best_val_mae*100:.2f}).")
+                stopped_early = True
+                break
 
-        with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
+            with open(metrics_path, "a", newline="") as f:
+                csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
 
-        loss_label = f"Huber Loss (δ={args.huber_delta})" if args.huber else "MSE Loss"
-        _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png")
-        _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
+            loss_label = f"Huber Loss (δ={args.huber_delta})" if args.huber else "MSE Loss"
+            _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png")
+            _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
 
         if epoch % 5 == 0:
             torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
