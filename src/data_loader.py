@@ -29,8 +29,7 @@ from numerical_features import (
 )
 
 _ROOT            = Path(__file__).parent.parent
-_IMAGES_DIR         = _ROOT / "data" / "images" / "raw"
-_RAW_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_raw"
+_IMAGES_DIR = _ROOT / "data" / "images" / "raw"
 _LABELS_DIR      = _ROOT / "data" / "labels"
 _FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
 
@@ -40,11 +39,6 @@ _CSV = {
     "test":  _LABELS_DIR / "test.csv",
 }
 
-_RAW_AUG_CSV = {
-    "train": _LABELS_DIR / "augmented_raw_train.csv",
-    "val":   _LABELS_DIR / "val.csv",
-    "test":  _LABELS_DIR / "test.csv",
-}
 
 # Dataset-specific normalisation computed over the training set
 _NORMALIZE = transforms.Normalize(
@@ -233,7 +227,6 @@ def get_loaders(
     num_workers: int = 4,
     train_transform=None,
     eval_transform=None,
-    use_augmented_raw: bool = False,
     worker_init_fn=None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Return (train_loader, val_loader, test_loader).
@@ -247,12 +240,8 @@ def get_loaders(
     """
     t_train = train_transform or DEFAULT_TRAIN_TRANSFORM
     t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
-    if use_augmented_raw:
-        csv_map = _RAW_AUG_CSV
-        img_dir = _RAW_AUG_IMAGES_DIR
-    else:
-        csv_map = _CSV
-        img_dir = _IMAGES_DIR
+    csv_map = _CSV
+    img_dir = _IMAGES_DIR
 
     _loader_kwargs = dict(
         num_workers=num_workers,

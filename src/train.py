@@ -30,7 +30,7 @@ from models.simple_cnn import SimpleCNN
 from models.numerical_features_plus_cnn import NumericalFeaturesPlusCNN
 from models.numerical_features_plus_efficientnet import NumericalFeaturesPlusEfficientNetB0
 from models.numerical_features_plus_convnext import NumericalFeaturesPlusConvNeXtSmall
-from models.resnet import get_resnet152, get_resnet18
+from models.resnet import get_resnet152, get_resnet50, get_resnet18
 from models.efficientnet import get_efficientnet_b0
 from models.convnext import get_convnext_small, get_convnext_base
 from models.vit import get_vit
@@ -51,7 +51,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -61,7 +60,15 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "resnet50": {
+        "builder": lambda args: get_resnet50(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -71,7 +78,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -81,7 +87,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -91,7 +96,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -101,7 +105,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -111,7 +114,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -121,7 +123,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -131,7 +132,6 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
-            use_augmented_raw=args.augmented_raw_precomputed,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -205,8 +205,6 @@ def parse_args():
                         help="train with backbone fully unfrozen from epoch 1")
     parser.add_argument("--unfreeze-after", type=int, default=None, metavar="N",
                         help="unfreeze backbone after N epochs and fine-tune at lr/10 (overrides --unfreeze)")
-    parser.add_argument("--augmented-raw-precomputed", action="store_true",
-                        help="use augmented_raw/ images and augmented_raw_train.csv (run precompute_augmented_segmentation.py --raw-output first)")
     parser.add_argument("--online-augment", action="store_true",
                         help="apply full augmentation pipeline live on raw images every epoch (no precomputation needed)")
     parser.add_argument("--adversarial", action="store_true",
@@ -267,7 +265,7 @@ def main():
     scheduler = (
         optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
         if args.cosine_lr else
-        optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+        optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     )
     scaler = GradScaler(device=device.type)
 
@@ -284,12 +282,11 @@ def main():
         "batch_size": args.batch_size,
         "unfreeze": args.unfreeze,
         "unfreeze_after": args.unfreeze_after,
-        "augmented_raw_precomputed": args.augmented_raw_precomputed,
         "online_augment": args.online_augment,
         "loss": f"huber(delta={args.huber_delta})" if args.huber else "mse",
         "optimizer": "adamw" if args.adamw else "adam",
         "scheduler": "cosine" if args.cosine_lr else "plateau",
-        "scheduler_patience": None if args.cosine_lr else 10,
+        "scheduler_patience": None if args.cosine_lr else 5,
         "adversarial": args.adversarial,
         "adv_epsilon": args.adv_epsilon if args.adversarial else None,
         "adv_weight": args.adv_weight if args.adversarial else None,
@@ -314,7 +311,7 @@ def main():
             scheduler = (
                 optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - epoch, eta_min=1e-6)
                 if args.cosine_lr else
-                optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+                optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
             )
             print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
 
@@ -368,6 +365,7 @@ def main():
         if val_mae[-1] < best_val_mae:
             best_val_mae = val_mae[-1]
             early_stop_counter = 0
+            torch.save(model.state_dict(), run_dir / "best_model.pt")
         else:
             early_stop_counter += 1
 
