@@ -20,32 +20,157 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-from data_loader import get_loaders, DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, _NORMALIZE, _RAW_IMAGES_DIR
+from data_loader import (
+    get_loaders, get_numerical_feature_loaders,
+    DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, _NORMALIZE,
+)
 from augmentation import ApplyAugmentation, seed_worker
 from torchvision import transforms as T
 from models.simple_cnn import SimpleCNN
-from models.resnet import get_resnet152, get_resnet18
+from models.numerical_features_plus_cnn import NumericalFeaturesPlusCNN
+from models.numerical_features_plus_efficientnet import NumericalFeaturesPlusEfficientNetB0
+from models.numerical_features_plus_convnext import NumericalFeaturesPlusConvNeXtSmall
+from models.resnet import get_resnet152, get_resnet50, get_resnet18
 from models.efficientnet import get_efficientnet_b0
 from models.convnext import get_convnext_small, get_convnext_base
 from models.vit import get_vit
 from models.vit_large import get_vit_large
 from models.resnext import get_resnext50
+from numerical_features import FEATURE_NAMES
 from pathlib import Path
 
 
 _ROOT = Path(__file__).parent.parent
 
+NUM_NUMERICAL_FEATURES = len(FEATURE_NAMES)
 
-MODELS = {
-    "simple_cnn": lambda args: SimpleCNN(),
-    "resnet152":  lambda args: get_resnet152(freeze_backbone=not args.unfreeze),
-    "resnet18":   lambda args: get_resnet18(freeze_backbone=not args.unfreeze),
-    "vit":        lambda args: get_vit(freeze_backbone=not args.unfreeze),
-    "vit_large":  lambda args: get_vit_large(freeze_backbone=not args.unfreeze),
-    "resnext50":  lambda args: get_resnext50(freeze_backbone=not args.unfreeze),
-    "efficientnet_b0": lambda args: get_efficientnet_b0(freeze_backbone=not args.unfreeze),
-    "convnext_small":  lambda args: get_convnext_small(freeze_backbone=not args.unfreeze),
-    "convnext_base":   lambda args: get_convnext_base(freeze_backbone=not args.unfreeze),
+MODEL_CONFIGS = {
+    "simple_cnn": {
+        "builder": lambda args: SimpleCNN(),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "resnet152": {
+        "builder": lambda args: get_resnet152(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "resnet50": {
+        "builder": lambda args: get_resnet50(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "resnet18": {
+        "builder": lambda args: get_resnet18(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "vit": {
+        "builder": lambda args: get_vit(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "vit_large": {
+        "builder": lambda args: get_vit_large(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "resnext50": {
+        "builder": lambda args: get_resnext50(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "efficientnet_b0": {
+        "builder": lambda args: get_efficientnet_b0(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "convnext_small": {
+        "builder": lambda args: get_convnext_small(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "convnext_base": {
+        "builder": lambda args: get_convnext_base(freeze_backbone=not args.unfreeze),
+        "loaders": lambda args: get_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            train_transform=args.train_transform,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "numerical_features_plus_cnn": {
+        "builder": lambda args: NumericalFeaturesPlusCNN(NUM_NUMERICAL_FEATURES),
+        "loaders": lambda args: get_numerical_feature_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            image_mode="gray",
+            augmentation=ApplyAugmentation() if args.online_augment else None,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "numerical_features_plus_efficientnet_b0": {
+        "builder": lambda args: NumericalFeaturesPlusEfficientNetB0(
+            NUM_NUMERICAL_FEATURES,
+            freeze_backbone=not args.unfreeze,
+        ),
+        "loaders": lambda args: get_numerical_feature_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            image_mode="rgb",
+            augmentation=ApplyAugmentation() if args.online_augment else None,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
+    "numerical_features_plus_convnext_small": {
+        "builder": lambda args: NumericalFeaturesPlusConvNeXtSmall(
+            NUM_NUMERICAL_FEATURES,
+            freeze_backbone=not args.unfreeze,
+        ),
+        "loaders": lambda args: get_numerical_feature_loaders(
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            image_mode="rgb",
+            augmentation=ApplyAugmentation() if args.online_augment else None,
+            worker_init_fn=seed_worker if args.online_augment else None,
+        ),
+    },
 }
 
 
@@ -62,10 +187,12 @@ def parse_args():
             "  uv run python src/train.py --model resnet18 --adversarial --adv-epsilon 0.02 --adv-weight 0.5\n"
         ),
     )
-    parser.add_argument("--model", required=True, choices=MODELS.keys(),
+    parser.add_argument("--model", required=True, choices=MODEL_CONFIGS.keys(),
                         help="model architecture to train:\n"
                              "  resnet18   — pretrained ResNet18, only the regression head is trained by default\n"
-                             "  simple_cnn — lightweight 3-layer CNN trained from scratch")
+                             "  simple_cnn — lightweight 3-layer CNN trained from scratch\n"
+                             "  numerical_features_plus_cnn — grayscale CNN fused with 19 engineered features\n"
+                             "  numerical_features_plus_efficientnet_b0 — EfficientNet-B0 fused with 19 engineered features")
     parser.add_argument("--epochs", type=int, default=50,
                         help="number of training epochs (default: 50)")
     parser.add_argument("--lr", type=float, default=1e-3,
@@ -78,14 +205,8 @@ def parse_args():
                         help="train with backbone fully unfrozen from epoch 1")
     parser.add_argument("--unfreeze-after", type=int, default=None, metavar="N",
                         help="unfreeze backbone after N epochs and fine-tune at lr/10 (overrides --unfreeze)")
-    parser.add_argument("--augmented-data", action="store_true",
-                        help="use augmented_segmentation/ images and augmented_train.csv (run precompute_augmented_segmentation.py first)")
-    parser.add_argument("--augmented-raw-precomputed", action="store_true",
-                        help="use augmented_raw/ images and augmented_raw_train.csv (run precompute_augmented_segmentation.py --raw-output first)")
     parser.add_argument("--online-augment", action="store_true",
                         help="apply full augmentation pipeline live on raw images every epoch (no precomputation needed)")
-    parser.add_argument("--raw", action="store_true",
-                        help="train on raw (unsegmented) images")
     parser.add_argument("--adversarial", action="store_true",
                         help="enable FGSM adversarial training (mixes clean and perturbed batches)")
     parser.add_argument("--adv-epsilon", type=float, default=0.01, metavar="EPS",
@@ -131,19 +252,12 @@ def main():
     else:
         train_transform = DEFAULT_TRAIN_TRANSFORM
 
-    train_loader, val_loader, _ = get_loaders(
-        batch_size=args.batch_size,
-        train_transform=train_transform,
-        num_workers=args.num_workers,
-        use_augmented_data=args.augmented_data,
-        use_augmented_raw=args.augmented_raw_precomputed,
-        use_raw=args.raw or args.online_augment,
-        worker_init_fn=seed_worker if args.online_augment else None,
-    )
+    args.train_transform = train_transform
+    train_loader, val_loader, _ = MODEL_CONFIGS[args.model]["loaders"](args)
 
     if args.unfreeze_after is not None:
         args.unfreeze = False
-    model = MODELS[args.model](args).to(device)
+    model = MODEL_CONFIGS[args.model]["builder"](args).to(device)
     criterion = nn.HuberLoss(delta=args.huber_delta) if args.huber else nn.MSELoss()
     optimizer = (optim.AdamW if args.adamw else optim.Adam)(
         [p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=1e-4
@@ -151,7 +265,7 @@ def main():
     scheduler = (
         optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
         if args.cosine_lr else
-        optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+        optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     )
     scaler = GradScaler(device=device.type)
 
@@ -168,14 +282,11 @@ def main():
         "batch_size": args.batch_size,
         "unfreeze": args.unfreeze,
         "unfreeze_after": args.unfreeze_after,
-        "augmented_data": args.augmented_data,
-        "augmented_raw_precomputed": args.augmented_raw_precomputed,
-        "raw": args.raw,
         "online_augment": args.online_augment,
         "loss": f"huber(delta={args.huber_delta})" if args.huber else "mse",
         "optimizer": "adamw" if args.adamw else "adam",
         "scheduler": "cosine" if args.cosine_lr else "plateau",
-        "scheduler_patience": None if args.cosine_lr else 10,
+        "scheduler_patience": None if args.cosine_lr else 5,
         "adversarial": args.adversarial,
         "adv_epsilon": args.adv_epsilon if args.adversarial else None,
         "adv_weight": args.adv_weight if args.adversarial else None,
@@ -200,31 +311,31 @@ def main():
             scheduler = (
                 optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - epoch, eta_min=1e-6)
                 if args.cosine_lr else
-                optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=10)
+                optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
             )
             print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
 
         model.train()
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
-        for images, labels in train_loader:
-            images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+        for batch in train_loader:
+            images, features, labels = _move_batch_to_device(batch, device)
 
             if args.adversarial:
-                images_adv = _fgsm_perturb(images, labels, model, criterion, args.adv_epsilon, device)
+                images_adv = _fgsm_perturb(images, features, labels, model, criterion, args.adv_epsilon, device)
             optimizer.zero_grad()
 
             if args.adversarial:
                 with autocast(device_type=device.type):
-                    preds_clean = model(images).view(-1)
+                    preds_clean = _forward_batch(model, images, features).view(-1)
                     loss_clean = criterion(preds_clean, labels)
-                    preds_adv = model(images_adv).view(-1)
+                    preds_adv = _forward_batch(model, images_adv, features).view(-1)
                     loss_adv = criterion(preds_adv, labels)
                 loss = (1 - args.adv_weight) * loss_clean + args.adv_weight * loss_adv
                 preds = preds_clean
             else:
                 with autocast(device_type=device.type):
-                    preds = model(images).view(-1)
+                    preds = _forward_batch(model, images, features).view(-1)
                     loss = criterion(preds, labels)
 
             scaler.scale(loss).backward()
@@ -240,10 +351,10 @@ def main():
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
         with torch.no_grad():
-            for images, labels in val_loader:
-                images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+            for batch in val_loader:
+                images, features, labels = _move_batch_to_device(batch, device)
                 with autocast(device_type=device.type):
-                    preds = model(images).view(-1)
+                    preds = _forward_batch(model, images, features).view(-1)
                     acc_mse += criterion(preds, labels)
                 acc_mae += (preds - labels).abs().mean()
         val_mse.append((acc_mse / len(val_loader)).item())
@@ -254,6 +365,7 @@ def main():
         if val_mae[-1] < best_val_mae:
             best_val_mae = val_mae[-1]
             early_stop_counter = 0
+            torch.save(model.state_dict(), run_dir / "best_model.pt")
         else:
             early_stop_counter += 1
 
@@ -275,12 +387,34 @@ def main():
             _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
 
 
-def _fgsm_perturb(images, labels, model, criterion, epsilon, device):
+def _move_batch_to_device(batch, device):
+    if len(batch) == 2:
+        images, labels = batch
+        return (
+            images.to(device, non_blocking=True),
+            None,
+            labels.to(device, non_blocking=True),
+        )
+    images, features, labels = batch
+    return (
+        images.to(device, non_blocking=True),
+        features.to(device, non_blocking=True),
+        labels.to(device, non_blocking=True),
+    )
+
+
+def _forward_batch(model, images, features):
+    if features is None:
+        return model(images)
+    return model(images, features)
+
+
+def _fgsm_perturb(images, features, labels, model, criterion, epsilon, device):
     # eval mode prevents the adversarial forward pass from corrupting BatchNorm running stats
     model.eval()
     images_adv = images.clone().detach().to(device).requires_grad_(True)
     with autocast(device_type=device.type):
-        preds = model(images_adv).view(-1)
+        preds = _forward_batch(model, images_adv, features).view(-1)
         loss = criterion(preds, labels)
     loss.backward()
     model.train()
@@ -304,9 +438,10 @@ def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir):
     model.eval()
     preds_list, gt_list = [], []
     with torch.no_grad():
-        for images, labels in val_loader:
-            preds_list.append(model(images.to(device)).view(-1).cpu().numpy())
-            gt_list.append(labels.numpy())
+        for batch in val_loader:
+            images, features, labels = _move_batch_to_device(batch, device)
+            preds_list.append(_forward_batch(model, images, features).view(-1).cpu().numpy())
+            gt_list.append(labels.cpu().numpy())
 
     preds = np.concatenate(preds_list) * 100
     gt    = np.concatenate(gt_list) * 100

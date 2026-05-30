@@ -20,6 +20,14 @@ def get_resnet152(freeze_backbone: bool = True) -> nn.Module:
 
     return model
 
+def get_resnet50(freeze_backbone: bool = True) -> nn.Module:
+    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+    if freeze_backbone:
+        for param in model.parameters():
+            param.requires_grad = False
+    model.fc = nn.Linear(model.fc.in_features, 1)
+    return model
+
 def get_resnet18(freeze_backbone: bool = True) -> nn.Module:
     """ResNet18 pretrained on ImageNet with a single regression output.
 
