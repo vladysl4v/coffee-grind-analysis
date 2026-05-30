@@ -18,24 +18,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from image_ops import MaskBoundingBoxCrop
+from numerical_features import (
+    FEATURE_NAMES,
+    extract_numerical_features,
+    get_normalized_gray_crop,
+)
 
 _ROOT            = Path(__file__).parent.parent
-_IMAGES_DIR      = _ROOT / "data" / "images" / "segmentation"
-_RAW_IMAGES_DIR  = _ROOT / "data" / "images" / "raw"
-_AUG_IMAGES_DIR  = _ROOT / "data" / "images" / "augmented_segmentation"
-_RAW_AUG_IMAGES_DIR = _ROOT / "data" / "images" / "augmented_raw"
+_IMAGES_DIR = _ROOT / "data" / "images" / "raw"
 _LABELS_DIR      = _ROOT / "data" / "labels"
-_STATS_PATH      = _ROOT / "data" / "dataset_stats.json"
-
-# Default train pipeline: mask-aware crop + dataset normalisation only.
-# Stochastic augmentations for ``--online-augment`` live in ``augmentation.transforms``.
+_FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
@@ -43,60 +42,12 @@ _CSV = {
     "test":  _LABELS_DIR / "test.csv",
 }
 
-_AUG_CSV = {
-    "train": _LABELS_DIR / "augmented_train.csv",
-    "val":   _LABELS_DIR / "val.csv",
-    "test":  _LABELS_DIR / "test.csv",
-}
 
-_RAW_AUG_CSV = {
-    "train": _LABELS_DIR / "augmented_raw_train.csv",
-    "val":   _LABELS_DIR / "val.csv",
-    "test":  _LABELS_DIR / "test.csv",
-}
-
-# Fallback stats (CenterCrop baseline); prefer values from data/dataset_stats.json
-_DEFAULT_MEAN = [0.1557, 0.0899, 0.0404]
-_DEFAULT_STD = [0.0483, 0.0349, 0.0190]
-
-
-def _load_dataset_stats(source: str = "segmentation") -> tuple[list[float], list[float]]:
-    if not _STATS_PATH.is_file():
-        return _DEFAULT_MEAN, _DEFAULT_STD
-    with _STATS_PATH.open(encoding="utf-8") as f:
-        payload = json.load(f)
-    block = payload.get(source)
-    if isinstance(block, dict):
-        return list(block["mean"]), list(block["std"])
-    # Legacy single-block file
-    if "mean" in payload and "std" in payload:
-        return list(payload["mean"]), list(payload["std"])
-    return _DEFAULT_MEAN, _DEFAULT_STD
-
-
-def build_normalize(
-    *,
-    use_augmented_data: bool = False,
-    use_augmented_raw: bool = False,
-    use_raw: bool = False,
-) -> transforms.Normalize:
-    if use_augmented_raw:
-        source = "raw"
-    elif use_augmented_data:
-        source = "augmented_segmentation"
-    elif use_raw:
-        source = "raw"
-    else:
-        source = "segmentation"
-    mean, std = _load_dataset_stats(source)
-    return transforms.Normalize(mean=mean, std=std)
-
-
-_DATASET_MEAN, _DATASET_STD = _load_dataset_stats("segmentation")
-
-_NORMALIZE = transforms.Normalize(mean=_DATASET_MEAN, std=_DATASET_STD)
-
-MASK_CROP = MaskBoundingBoxCrop(size=224, padding_ratio=0.05, threshold=8)
+# Dataset-specific normalisation computed over the training set
+_NORMALIZE = transforms.Normalize(
+    mean=[0.1557, 0.0899, 0.0404],
+    std =[0.0483, 0.0349, 0.0190],
+)
 
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
     MASK_CROP,
@@ -108,6 +59,17 @@ DEFAULT_EVAL_TRANSFORM = transforms.Compose([
     MASK_CROP,
     transforms.ToTensor(),
     _NORMALIZE,
+])
+
+_NORMALIZE_IMAGENET = transforms.Normalize(
+    mean=[0.485, 0.456, 0.406],
+    std =[0.229, 0.224, 0.225],
+)
+
+DEFAULT_FEATURE_MODEL_TRANSFORM = transforms.Compose([
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    _NORMALIZE_IMAGENET,
 ])
 
 
@@ -157,14 +119,117 @@ class CoffeeDataset(Dataset):
         return image, label
 
 
+class NumericalFeatureCoffeeDataset(CoffeeDataset):
+    def __init__(
+        self,
+        split: str,
+        image_mode: str = "rgb",
+        transform=None,
+        augmentation=None,
+        feature_mean: np.ndarray | None = None,
+        feature_std: np.ndarray | None = None,
+    ):
+        super().__init__(split, transform=None)
+
+        if image_mode not in {"rgb", "gray"}:
+            raise ValueError(f"image_mode must be 'rgb' or 'gray', got {image_mode!r}")
+
+        self.image_mode = image_mode
+        self.image_transform = transform
+        self.augmentation = augmentation
+        self.feature_mean = feature_mean
+        self.feature_std = feature_std
+        self._feature_cache: dict[int, np.ndarray] = {}
+        self._precomputed_features = self._load_precomputed_features(split)
+
+    def _load_image(self, idx: int) -> Image.Image:
+        img_path = _IMAGES_DIR / self.samples[idx]
+        if not img_path.exists():
+            raise FileNotFoundError(
+                f"Image not found: {img_path}\n"
+                f"Place all images in {_IMAGES_DIR}"
+            )
+        return Image.open(img_path).convert("RGB")
+
+    def _image_tensor(self, image: Image.Image) -> torch.Tensor:
+        if self.image_mode == "gray":
+            gray = get_normalized_gray_crop(image)
+            return torch.from_numpy(gray).unsqueeze(0).float() / 255.0
+
+        transform = self.image_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+        return transform(image)
+
+    def _load_precomputed_features(self, split: str) -> dict[str, np.ndarray]:
+        csv_path = _FEATURES_DIR / f"{split}_features.csv"
+        if not csv_path.exists():
+            return {}
+
+        df = pd.read_csv(csv_path)
+        required_columns = {"sample", *FEATURE_NAMES}
+        missing_columns = required_columns.difference(df.columns)
+        if missing_columns:
+            raise ValueError(
+                f"Precomputed feature CSV {csv_path} is missing columns: {sorted(missing_columns)}"
+            )
+
+        feature_map: dict[str, np.ndarray] = {}
+        for _, row in df.iterrows():
+            feature_map[row["sample"]] = row[list(FEATURE_NAMES)].to_numpy(dtype=np.float32)
+
+        missing_samples = sorted(set(self.samples).difference(feature_map))
+        if missing_samples:
+            raise ValueError(
+                f"Precomputed feature CSV {csv_path} is missing {len(missing_samples)} samples "
+                f"(for example: {missing_samples[:3]})"
+            )
+
+        return feature_map
+
+    def _feature_vector(self, idx: int, image: Image.Image | None = None) -> np.ndarray:
+        if idx not in self._feature_cache:
+            sample = self.samples[idx]
+            if sample in self._precomputed_features:
+                self._feature_cache[idx] = self._precomputed_features[sample]
+            else:
+                if image is None:
+                    image = self._load_image(idx)
+                self._feature_cache[idx] = extract_numerical_features(image).astype(np.float32)
+        return self._feature_cache[idx]
+
+    def compute_feature_stats(self) -> tuple[np.ndarray, np.ndarray]:
+        features = np.stack(
+            [self._feature_vector(idx) for idx in range(len(self))],
+            axis=0,
+        ).astype(np.float32)
+        mean = features.mean(axis=0)
+        std = features.std(axis=0)
+        std = np.where(std < 1e-6, 1.0, std)
+        return mean.astype(np.float32), std.astype(np.float32)
+
+    def __getitem__(self, idx: int):
+        image = self._load_image(idx)
+
+        if self.augmentation is not None:
+            image = self.augmentation(image)
+            features = extract_numerical_features(image).astype(np.float32)
+        else:
+            features = self._feature_vector(idx, image=image).copy()
+
+        image_tensor = self._image_tensor(image)
+
+        if self.feature_mean is not None and self.feature_std is not None:
+            features = (features - self.feature_mean) / self.feature_std
+
+        label = torch.tensor(self.labels[idx] / 100.0, dtype=torch.float32)
+        feature_tensor = torch.from_numpy(features.astype(np.float32))
+        return image_tensor, feature_tensor, label
+
+
 def get_loaders(
     batch_size: int = 32,
     num_workers: int = 4,
     train_transform=None,
     eval_transform=None,
-    use_augmented_data: bool = False,
-    use_augmented_raw: bool = False,
-    use_raw: bool = False,
     worker_init_fn=None,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Return (train_loader, val_loader, test_loader).
@@ -176,18 +241,10 @@ def get_loaders(
     train_transform:  override the default augmentation pipeline
     eval_transform:   override the default eval pipeline (used for val + test)
     """
-    if use_augmented_raw:
-        csv_map = _RAW_AUG_CSV
-        img_dir = _RAW_AUG_IMAGES_DIR
-    elif use_augmented_data:
-        csv_map = _AUG_CSV
-        img_dir = _AUG_IMAGES_DIR
-    elif use_raw:
-        csv_map = _CSV
-        img_dir = _RAW_IMAGES_DIR
-    else:
-        csv_map = _CSV
-        img_dir = _IMAGES_DIR
+    t_train = train_transform or DEFAULT_TRAIN_TRANSFORM
+    t_eval  = eval_transform  or DEFAULT_EVAL_TRANSFORM
+    csv_map = _CSV
+    img_dir = _IMAGES_DIR
 
     normalize = build_normalize(
         use_augmented_data=use_augmented_data,
@@ -220,6 +277,73 @@ def get_loaders(
     )
     test_loader = DataLoader(
         CoffeeDataset("test", transform=t_eval, csv_map=csv_map, images_dir=img_dir),
+        batch_size=batch_size,
+        shuffle=False,
+        **_loader_kwargs,
+    )
+    return train_loader, val_loader, test_loader
+
+
+def get_numerical_feature_loaders(
+    batch_size: int = 32,
+    num_workers: int = 4,
+    image_mode: str = "rgb",
+    train_transform=None,
+    eval_transform=None,
+    augmentation=None,
+    worker_init_fn=None,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    t_train = train_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+    t_eval = eval_transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+
+    train_dataset = NumericalFeatureCoffeeDataset(
+        "train",
+        image_mode=image_mode,
+        transform=t_train,
+        augmentation=augmentation,
+    )
+    feature_mean, feature_std = train_dataset.compute_feature_stats()
+    train_dataset.feature_mean = feature_mean
+    train_dataset.feature_std = feature_std
+
+    val_dataset = NumericalFeatureCoffeeDataset(
+        "val",
+        image_mode=image_mode,
+        transform=t_eval,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+    )
+    test_dataset = NumericalFeatureCoffeeDataset(
+        "test",
+        image_mode=image_mode,
+        transform=t_eval,
+        feature_mean=feature_mean,
+        feature_std=feature_std,
+    )
+
+    _loader_kwargs = dict(
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
+        multiprocessing_context="spawn" if num_workers > 0 else None,
+    )
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+        worker_init_fn=worker_init_fn,
+        **_loader_kwargs,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        **_loader_kwargs,
+    )
+    test_loader = DataLoader(
+        test_dataset,
         batch_size=batch_size,
         shuffle=False,
         **_loader_kwargs,

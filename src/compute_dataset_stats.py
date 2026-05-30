@@ -7,34 +7,24 @@ Writes results to ``data/dataset_stats.json`` for automatic loading at import ti
 Usage
 -----
 uv run python src/compute_dataset_stats.py
-uv run python src/compute_dataset_stats.py --raw
-uv run python src/compute_dataset_stats.py --augmented-data
 """
-
-from __future__ import annotations
-
-import argparse
-import json
-from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-from data_loader import CoffeeDataset, _AUG_IMAGES_DIR, _RAW_IMAGES_DIR, _STATS_PATH
-from image_ops import MaskBoundingBoxCrop
+from data_loader import CoffeeDataset
 
-_ROOT = Path(__file__).parent.parent
-
-
-def _pre_tensor_transform() -> transforms.Compose:
-    return transforms.Compose([
-        MaskBoundingBoxCrop(size=224, padding_ratio=0.05, threshold=8),
-        transforms.ToTensor(),
-    ])
+_TRANSFORM = transforms.Compose([
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+])
 
 
-def compute_channel_stats(loader: DataLoader) -> tuple[list[float], list[float]]:
+def main():
+    dataset = CoffeeDataset("train", transform=_TRANSFORM)
+    loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=False)
+
     mean = torch.zeros(3)
     var = torch.zeros(3)
     n = 0
