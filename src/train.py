@@ -358,6 +358,18 @@ def main():
         train_mse.append((acc_mse / len(train_loader)).item())
         train_mae.append((acc_mae / len(train_loader)).item())
 
+            model.eval()
+            acc_mse = torch.zeros(1, device=device)
+            acc_mae = torch.zeros(1, device=device)
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
+                    with autocast(device_type=device.type):
+                        preds = model(images).view(-1)
+                        acc_mse += criterion(preds, labels)
+                    acc_mae += (preds - labels).abs().mean()
+            val_mse.append((acc_mse / len(val_loader)).item())
+            val_mae.append((acc_mae / len(val_loader)).item())
         model.eval()
         acc_mse = torch.zeros(1, device=device)
         acc_mae = torch.zeros(1, device=device)
@@ -371,39 +383,6 @@ def main():
         val_mse.append((acc_mse / len(val_loader)).item())
         val_mae.append((acc_mae / len(val_loader)).item())
 
-                if args.adversarial:
-                    images_adv = _fgsm_perturb(images, labels, model, criterion, args.adv_epsilon, device)
-                optimizer.zero_grad()
-
-        if val_mae[-1] < best_val_mae:
-            best_val_mae = val_mae[-1]
-            early_stop_counter = 0
-            torch.save(model.state_dict(), run_dir / "best_model.pt")
-        else:
-            early_stop_counter += 1
-
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-                with torch.no_grad():
-                    acc_mse += loss.detach()
-                    acc_mae += (preds.detach() - labels).abs().mean()
-            train_mse.append((acc_mse / len(train_loader)).item())
-            train_mae.append((acc_mae / len(train_loader)).item())
-
-            model.eval()
-            acc_mse = torch.zeros(1, device=device)
-            acc_mae = torch.zeros(1, device=device)
-            with torch.no_grad():
-                for images, labels in val_loader:
-                    images, labels = images.to(device, non_blocking=True), labels.to(device, non_blocking=True)
-                    with autocast(device_type=device.type):
-                        preds = model(images).view(-1)
-                        acc_mse += criterion(preds, labels)
-                    acc_mae += (preds - labels).abs().mean()
-            val_mse.append((acc_mse / len(val_loader)).item())
-            val_mae.append((acc_mae / len(val_loader)).item())
-
             scheduler.step() if args.cosine_lr else scheduler.step(val_mse[-1])
 
             if val_mae[-1] < best_val_mae:
@@ -413,6 +392,12 @@ def main():
                 torch.save(model.state_dict(), models_dir / "best.pt")
             else:
                 early_stop_counter += 1
+        if val_mae[-1] < best_val_mae:
+            best_val_mae = val_mae[-1]
+            early_stop_counter = 0
+            torch.save(model.state_dict(), run_dir / "best_model.pt")
+        else:
+            early_stop_counter += 1
 
             print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
 
@@ -428,50 +413,9 @@ def main():
             _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png")
             _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
 
-            if epoch % 5 == 0:
-                torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
-                _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
-    finally:
-        training_state = {
-            "last_epoch": last_epoch,
-            "best_epoch": best_epoch,
-            "best_val_mae": best_val_mae,
-            "stopped_early": stopped_early,
-            "best_checkpoint": "models/best.pt" if (models_dir / "best.pt").is_file() else None,
-        }
-        with open(run_dir / "training_state.json", "w", encoding="utf-8") as f:
-            json.dump(training_state, f, indent=2)
-        if last_epoch > 0:
-            torch.save(model.state_dict(), models_dir / f"epoch_{last_epoch:03d}.pt")
-        _run_post_training_conformal(args, run_dir, device)
-
-
-def _run_post_training_conformal(args, run_dir: Path, device: torch.device) -> None:
-    if args.skip_conformal:
-        print("Skipping conformal evaluation (--skip-conformal).")
-        return
-    if args.model != "convnext_small":
-        print(f"Conformal auto-eval supports convnext_small only; got {args.model!r}. Skipping.")
-        return
-    if not (run_dir / "models").is_dir():
-        print("No checkpoints saved — skipping conformal evaluation.")
-        return
-
-    print("Running split conformal evaluation →", (run_dir / "conformal").as_posix())
-    try:
-        from conformal.evaluate import evaluate_and_save, resolve_eval_checkpoint
-
-        ckpt = resolve_eval_checkpoint(run_dir)
-        evaluate_and_save(
-            run_dir,
-            checkpoint=ckpt,
-            alpha=args.conformal_alpha,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            skip_baseline_assert=True,
-        )
-    except Exception as exc:
-        print(f"Conformal evaluation failed: {exc}")
+        if epoch % 5 == 0:
+            torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
+            _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
 
 
 def _move_batch_to_device(batch, device):
