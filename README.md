@@ -253,6 +253,32 @@ uv run python src/compute_dataset_stats.py
 uv run python src/compute_dataset_stats.py --raw
 ```
 
+## Experiments
+
+### Probabilistic regression — Gaussian NLL (failed)
+
+**Files:** `src/models/convnext_gaussian.py`, `src/train_gaussian.py`
+
+Attempted to turn the regression into a probabilistic model that predicts both mean fineness (μ) and per-sample uncertainty (σ) using a ConvNeXt-Small backbone with two separate linear heads and Gaussian NLL loss:
+
+```
+loss = 0.5 * (log(var) + (y - mu)² / var)
+```
+
+**What worked:** The mean prediction (μ) was competitive — best val MAE ~3.71% vs the 3.49% deterministic baseline. Separate heads for μ and log_var (instead of a shared 2-output layer) stabilised training significantly.
+
+**What failed:** Per-sample uncertainty was useless. σ collapsed to a constant ~1.5–2.2% regardless of actual prediction error. The model learned the global average error, not which specific samples are hard.
+
+Fixes attempted:
+- **Two-phase training** (`--two-phase`): phase 1 trains μ with MSE only, phase 2 unlocks σ head and switches to NLL. Did not help — σ still converged to a constant.
+- **Explicit sigma supervision** (`--explicit-sigma`): supervised σ directly with the per-sample residual `|μ.detach() − y|` instead of NLL. Slightly better calibration error but σ still had minimal variation across samples (range ~1.5–2.2%).
+
+**Root cause:** The backbone features encode fineness value but not prediction difficulty. The σ head has nothing to discriminate on — all feature vectors look equally hard to it. This is a fundamental limitation of single-model heteroscedastic regression on small datasets with low feature diversity.
+
+**Proposed alternative:** Ensemble uncertainty — run top-N checkpoints and use the std of their predictions as uncertainty. Models trained differently disagree on hard samples even when individual models are overconfident.
+
+---
+
 ## CUDA install
 
 ```bash
