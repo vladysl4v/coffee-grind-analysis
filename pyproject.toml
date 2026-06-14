@@ -17,6 +17,7 @@ dependencies = [
     "torch",
     "torchvision",
     "scipy",
+    "streamlit>=1.58.0",
 ]
 
 # ONLY PyTorch index defined (no global override)

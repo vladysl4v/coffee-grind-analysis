@@ -22,7 +22,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from numerical_features import (
+from src.numerical_features import (
     FEATURE_NAMES,
     extract_numerical_features,
     get_normalized_gray_crop,
