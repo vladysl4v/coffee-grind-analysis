@@ -52,16 +52,42 @@ _NORMALIZE = transforms.Normalize(
     std =[0.0483, 0.0349, 0.0190],
 )
 
+from torchvision.transforms import functional as F
+
+class TwoOffsetCenterCrops:
+    def __init__(self, size):
+        if isinstance(size, int):
+            size = (size, size)
+        self.crop_h, self.crop_w = size
+
+    def __call__(self, img):
+        width, height = F.get_image_size(img)
+
+        center_x = width // 2
+        center_y = height // 2
+
+        top = center_y - self.crop_h // 2
+
+        # left crop: right boundary at center
+        left1 = center_x - self.crop_w
+        crop1 = F.crop(img, top, left1, self.crop_h, self.crop_w)
+
+        # right crop: left boundary at center
+        left2 = center_x
+        crop2 = F.crop(img, top, left2, self.crop_h, self.crop_w)
+
+        return crop1, crop2
+
 DEFAULT_TRAIN_TRANSFORM = transforms.Compose([
-    transforms.CenterCrop(224),
     transforms.ToTensor(),
     _NORMALIZE,
+    TwoOffsetCenterCrops(224),
 ])
 
 DEFAULT_EVAL_TRANSFORM = transforms.Compose([
-    transforms.CenterCrop(224),
     transforms.ToTensor(),
     _NORMALIZE,
+    TwoOffsetCenterCrops(224),
 ])
 
 
@@ -93,10 +119,10 @@ class CoffeeDataset(Dataset):
         self.transform = transform
 
     def __len__(self) -> int:
-        return len(self.samples)
+        return len(self.samples) * 2
 
     def __getitem__(self, idx: int):
-        img_path = self._images_dir / self.samples[idx]
+        img_path = self._images_dir / self.samples[idx // 2]
         if not img_path.exists():
             raise FileNotFoundError(
                 f"Image not found: {img_path}\n"
@@ -105,9 +131,12 @@ class CoffeeDataset(Dataset):
         image = Image.open(img_path).convert("RGB")
 
         if self.transform is not None:
-            image = self.transform(image)
-
-        label = torch.tensor(self.labels[idx] / 100.0, dtype=torch.float32)
+            img1, img2 = self.transform(image)
+        if idx % 2 == 0:
+            image = img1
+        else:
+            image = img2
+        label = torch.tensor(self.labels[idx // 2] / 100.0, dtype=torch.float32)
         return image, label
 
 
