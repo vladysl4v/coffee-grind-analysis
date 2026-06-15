@@ -31,7 +31,9 @@ from numerical_features import (
 _ROOT            = Path(__file__).parent.parent
 _IMAGES_DIR = _ROOT / "data" / "images" / "raw"
 _LABELS_DIR      = _ROOT / "data" / "labels"
-_FEATURES_DIR = _ROOT / "data" / "features" / "numerical"
+_FEATURES_DIR    = _ROOT / "data" / "features" / "numerical"
+_SYNTH_IMAGES_DIR = _ROOT / "data" / "images" / "synthetic"
+_SYNTH_LABELS_CSV = _ROOT / "data" / "labels" / "synthetic.csv"
 
 _CSV = {
     "train": _LABELS_DIR / "train.csv",
@@ -220,6 +222,78 @@ class NumericalFeatureCoffeeDataset(CoffeeDataset):
         label = torch.tensor(self.labels[idx] / 100.0, dtype=torch.float32)
         feature_tensor = torch.from_numpy(features.astype(np.float32))
         return image_tensor, feature_tensor, label
+
+
+class SyntheticDataset(Dataset):
+    """Image-only dataset for synthetic samples. Returns (image, label)."""
+
+    def __init__(self, samples, transform=None):
+        self.samples = samples  # list of (filename, label_in_0_1)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        fname, label = self.samples[idx]
+        img = Image.open(_SYNTH_IMAGES_DIR / fname).convert("RGB")
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, torch.tensor(label, dtype=torch.float32)
+
+
+class SyntheticNumericalDataset(Dataset):
+    """Synthetic dataset with on-the-fly numerical features. Returns (image, features, label)."""
+
+    def __init__(self, samples, image_mode="rgb", transform=None, feature_mean=None, feature_std=None):
+        self.samples      = samples
+        self.image_mode   = image_mode
+        self.transform    = transform or DEFAULT_FEATURE_MODEL_TRANSFORM
+        self.feature_mean = feature_mean
+        self.feature_std  = feature_std
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        fname, label = self.samples[idx]
+        img = Image.open(_SYNTH_IMAGES_DIR / fname).convert("RGB")
+
+        features = extract_numerical_features(img).astype(np.float32)
+        if self.feature_mean is not None and self.feature_std is not None:
+            features = (features - self.feature_mean) / self.feature_std
+
+        if self.image_mode == "gray":
+            gray = get_normalized_gray_crop(img)
+            img_tensor = torch.from_numpy(gray).unsqueeze(0).float() / 255.0
+        else:
+            img_tensor = self.transform(img)
+
+        return img_tensor, torch.from_numpy(features), torch.tensor(label, dtype=torch.float32)
+
+
+def load_synthetic_split(val_frac: float = 0.1, seed: int = 42):
+    """Load synthetic.csv and split into (train_samples, val_samples).
+
+    Each sample is (filename, label) where label is in [0, 1].
+    """
+    if not _SYNTH_LABELS_CSV.exists():
+        raise FileNotFoundError(
+            f"Synthetic labels CSV not found: {_SYNTH_LABELS_CSV}\n"
+            f"Populate data/labels/synthetic.csv with Sample;Fineness rows before using --synthetic."
+        )
+    df = pd.read_csv(_SYNTH_LABELS_CSV, sep=";", decimal=",")
+    if len(df) == 0:
+        raise ValueError(
+            f"data/labels/synthetic.csv has no data rows — add your synthetic labels before using --synthetic."
+        )
+    all_samples = [(str(row.iloc[0]), float(row.iloc[1]) / 100.0) for _, row in df.iterrows()]
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(len(all_samples))
+    n_val         = max(1, int(len(all_samples) * val_frac))
+    val_samples   = [all_samples[i] for i in idx[:n_val]]
+    train_samples = [all_samples[i] for i in idx[n_val:]]
+    return train_samples, val_samples
 
 
 def get_loaders(

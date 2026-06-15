@@ -10,11 +10,16 @@ wheels/
 .venv
 *.png
 
-# Label CSVs — only the fixed splits are tracked
+# Label CSVs — only the fixed splits and synthetic labels are tracked
 data/labels/*.csv
 !data/labels/train.csv
 !data/labels/val.csv
 !data/labels/test.csv
+!data/labels/synthetic.csv
+
+# Synthetic images — large files, not committed
+data/images/synthetic/*
+!data/images/synthetic/.gitkeep
 
 # Precomputed numerical features — generate locally with precompute_numerical_features.py
 data/features/numerical/*.csv
