@@ -53,6 +53,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -62,6 +63,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -71,6 +73,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -80,6 +83,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -89,6 +93,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -98,6 +103,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -107,6 +113,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -116,6 +123,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -125,6 +133,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -134,6 +143,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -233,6 +243,8 @@ def parse_args():
                         help="drop synthetic data from training when backbone unfreezes (requires --unfreeze-after)")
     parser.add_argument("--synth-limit", type=int, default=None, metavar="N",
                         help="cap the number of synthetic training images used (default: all)")
+    parser.add_argument("--crop", type=int, default=224, metavar="PX",
+                        help="centre-crop size in pixels (default: 224)")
     return parser.parse_args()
 
 
@@ -253,17 +265,21 @@ def main():
         torch.backends.cudnn.benchmark = True
     print(f"Model: {args.model} | Device: {device} | Run: {run_dir.name}")
 
+    eval_transform = T.Compose([T.CenterCrop(args.crop), T.ToTensor(), _NORMALIZE])
     if args.online_augment:
         train_transform = T.Compose([
             ApplyAugmentation(),
-            T.CenterCrop(224),
+            T.CenterCrop(args.crop),
             T.ToTensor(),
             _NORMALIZE,
         ])
+    elif args.crop != 224:
+        train_transform = T.Compose([T.CenterCrop(args.crop), T.ToTensor(), _NORMALIZE])
     else:
         train_transform = DEFAULT_TRAIN_TRANSFORM
 
     args.train_transform = train_transform
+    args.eval_transform  = eval_transform
     train_loader, val_loader, _ = MODEL_CONFIGS[args.model]["loaders"](args)
 
     if args.unfreeze_after is not None:
@@ -301,14 +317,15 @@ def main():
             )
         else:
             synth_train_ds = SyntheticDataset(synth_train_samples, transform=train_transform)
-            synth_val_ds   = SyntheticDataset(synth_val_samples,   transform=DEFAULT_EVAL_TRANSFORM)
+            synth_val_ds   = SyntheticDataset(synth_val_samples,   transform=eval_transform)
 
         mixed_ds     = ConcatDataset([train_loader.dataset, synth_train_ds])
         worker_fn    = seed_worker if args.online_augment else None
         train_loader = DataLoader(mixed_ds, batch_size=args.batch_size, shuffle=True,
                                   worker_init_fn=worker_fn, **_lkw)
         synth_val_loader = DataLoader(synth_val_ds, batch_size=args.batch_size, shuffle=False, **_lkw)
-        print(f"Synthetic: {len(synth_train_samples)} train + {len(synth_val_samples)} val "
+        print(f"Real: {len(real_train_loader.dataset)} train + {len(val_loader.dataset)} val  "
+              f"Synth: {len(synth_train_samples)} train + {len(synth_val_samples)} val  "
               f"| total train samples: {len(mixed_ds)}")
 
     model = MODEL_CONFIGS[args.model]["builder"](args).to(device)
@@ -352,6 +369,7 @@ def main():
         "synth_val_frac": args.synth_val_frac if args.synthetic else None,
         "synth_limit": args.synth_limit if args.synthetic else None,
         "real_only_after_unfreeze": args.real_only_after_unfreeze if args.synthetic else None,
+        "crop": args.crop,
     }
     with open(run_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
@@ -451,10 +469,11 @@ def main():
         else:
             early_stop_counter += 1
 
+        lrs = "/".join(f"{pg['lr']:.2e}" for pg in optimizer.param_groups)
         if args.synthetic:
-            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val_real {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | val_synth mae={synth_val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
+            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val_real {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | val_synth mae={synth_val_mae[-1]*100:.2f} | lr={lrs}")
         else:
-            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
+            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={lrs}")
 
         if args.early_stop_patience > 0 and early_stop_counter >= args.early_stop_patience:
             print(f"Early stopping at epoch {epoch}: val MAE did not improve for {args.early_stop_patience} epochs (best={best_val_mae*100:.2f}).")

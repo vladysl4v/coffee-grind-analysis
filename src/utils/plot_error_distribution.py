@@ -53,6 +53,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=MODEL_BUILDERS.keys())
     parser.add_argument("--run",   default=None, help="e.g. run_043 — omit to use best run automatically")
+    parser.add_argument("--crop",  type=int, default=224, help="centre-crop used during training (default: 224)")
     args = parser.parse_args()
 
     model_dir = _RUNS_DIR / args.model
@@ -63,15 +64,18 @@ def main():
         run_dir = find_best_run(model_dir)
         print(f"Best run: {run_dir.name}")
 
-    checkpoint = run_dir / "best_model.pt"
-    if not checkpoint.exists():
-        # fall back to last saved checkpoint
+    for candidate in ["best_model.pt", "final_best.pt"]:
+        checkpoint = run_dir / candidate
+        if checkpoint.exists():
+            break
+    else:
         checkpoints = sorted((run_dir / "models").glob("*.pt")) if (run_dir / "models").exists() else []
         if not checkpoints:
             print(f"No checkpoint found in {run_dir}")
             sys.exit(1)
         checkpoint = checkpoints[-1]
-        print(f"No best_model.pt — using {checkpoint.name}")
+        print(f"No best_model.pt/final_best.pt — using {checkpoint.name}")
+    print(f"Checkpoint: {checkpoint.name}")
 
     out = run_dir / "graphs" / "error_distribution.png"
 
@@ -81,7 +85,11 @@ def main():
     model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
     model.to(device).eval()
 
-    val_dataset = CoffeeDataset("val", transform=DEFAULT_EVAL_TRANSFORM)
+    from torchvision import transforms as T
+    from data_loader import _NORMALIZE
+    eval_transform = (DEFAULT_EVAL_TRANSFORM if args.crop == 224 else
+                      T.Compose([T.CenterCrop(args.crop), T.ToTensor(), _NORMALIZE]))
+    val_dataset = CoffeeDataset("val", transform=eval_transform)
     loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
 
     gts, preds = [], []

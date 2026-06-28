@@ -63,34 +63,13 @@ uv add torch torchvision
 
 ```
 src/
-  train.py                          ← main training script
-  data_loader.py                    ← dataset and DataLoader construction
-  split_labels.py                   ← generate train/val/test CSV splits (run once)
-  precompute_segmentation.py        ← background-mask all raw images (run once)
-  precompute_augmented_segmentation.py  ← generate offline augmented image sets
-  precompute_numerical_features.py  ← precompute 19 numerical descriptors per image (run once)
-  compute_dataset_stats.py          ← compute per-channel mean/std over training images
-  numerical_features.py             ← hand-crafted feature extraction (morphology, FFT, GLCM, …)
-  quality_filter.py                 ← blur and brightness-based image rejection
-  region_extraction.py              ← background masking implementation
-  augmentation/
-    transforms.py                   ← full augmentation pipeline
-    __init__.py
-    data_augmentation_demo.ipynb    ← visual demo and offline dataset generation
-  evaluate.py                       ← evaluate a saved ConvNeXt-Small model on the real val set
-  models/
-    simple_cnn.py
-    resnet.py                       ← ResNet-18 and ResNet-152
-    resnext.py                      ← ResNeXt-50
-    efficientnet.py                 ← EfficientNet-B0
-    convnext.py                     ← ConvNeXt-Small and ConvNeXt-Base
-    vit.py                          ← ViT-Base
-    vit_large.py                    ← ViT-Large
-    numerical_features_plus_cnn.py          ← grayscale CNN fused with numerical features
-    numerical_features_plus_efficientnet.py ← EfficientNet-B0 fused with numerical features
-
-run_all_experiments.py              ← run the full experiment grid (see TRAINING_PLAN.md)
-run_failed_experiments.py           ← rerun FAILED entries from failed_runs.log with --batch-size 16
+  train.py          ← main training script
+  data_loader.py    ← dataset and DataLoader construction
+  numerical_features.py  ← hand-crafted feature extraction (morphology, FFT, GLCM, …)
+  augmentation/     ← augmentation pipeline
+  models/           ← model architectures
+  utils/            ← evaluation, plotting, and analysis scripts
+  experiments/      ← legacy experiment scripts
 ```
 
 ## Working with Data
@@ -146,9 +125,9 @@ This writes `data/features/numerical/train_features.csv` and `val_features.csv`.
 
 | Split | Groups | Images |
 |-------|--------|--------|
-| Train | 130 (80%) | ~480 |
-| Val   | 16 (10%)  | ~58  |
-| Test  | 16 (10%)  | ~58  |
+| Train | 115 (79%) | 489 |
+| Val   | 15 (10%)  | 60  |
+| Test  | 16 (11%)  | 58  |
 
 607 images pass quality filtering (41 blurry images removed). Fixed seed `SEED = 42`.
 
@@ -170,6 +149,24 @@ for images, labels in train_loader:
 Normalisation uses dataset-specific stats computed over the training set: `mean=[0.1557, 0.0899, 0.0404]`, `std=[0.0483, 0.0349, 0.0190]`.
 
 ## Training
+
+### State-of-the-art model
+
+**ConvNeXt-Small · 420 px crop · 1 500 synthetic images — Val MAE 2.31%**
+
+To train:
+
+```bash
+uv run python src/train.py --model convnext_small --epochs 100 --lr 1e-3 \
+  --unfreeze-after 15 --early-stop-patience 12 \
+  --synthetic --synth-limit 1500 --crop 420
+```
+
+To evaluate the saved best model (`data/runs/convnext_small/run_069/best_model.pt`):
+
+```bash
+uv run python src/evaluate.py run_069 --crop 420
+```
 
 ### Recommended settings
 
@@ -216,7 +213,6 @@ uv run python src/train.py --model numerical_features_plus_efficientnet_b0 --unf
 | `--num-workers` | `4` | DataLoader worker processes |
 | `--unfreeze` | off | Train with backbone fully unfrozen from epoch 1 |
 | `--unfreeze-after N` | off | Freeze backbone for N epochs, then unfreeze backbone at lr/10 |
-| `--augmented-raw-precomputed` | off | Use `augmented_raw/` and `augmented_raw_train.csv` |
 | `--online-augment` | off | Apply full augmentation pipeline live on raw images every epoch |
 | `--adamw` | off | Use AdamW optimizer instead of Adam |
 | `--cosine-lr` | off | Use cosine annealing scheduler instead of ReduceLROnPlateau |
@@ -230,6 +226,7 @@ uv run python src/train.py --model numerical_features_plus_efficientnet_b0 --unf
 | `--synth-val-frac F` | `0.1` | Fraction of synthetic data held out for a separate synthetic val split |
 | `--synth-limit N` | all | Cap the number of synthetic training images used |
 | `--real-only-after-unfreeze` | off | Drop synthetic data from training when backbone unfreezes (requires `--unfreeze-after`) |
+| `--crop N` | `224` | Centre-crop size in pixels |
 
 When `--synthetic` is active, val metrics are reported separately for the real and synthetic splits, and `metrics.csv` gains `val_real_*` / `val_synth_*` columns. `data/labels/synthetic.csv` must exist (semicolon-delimited, `Sample;Fineness` header, fineness as a decimal value 0–100).
 
@@ -253,31 +250,57 @@ uv run python run_failed_experiments.py
 
 ## Evaluation
 
-**Module:** `src/evaluate.py`
+**Module:** `src/utils/evaluate.py`
 
-Evaluates a saved ConvNeXt-Small model on the real val set and prints Val MAE and Val RMSE.
+Evaluates a saved ConvNeXt-Small model on the real val set. Prints Val MAE, RMSE, bias, std, p80, p95 and saves a scatter plot, error distribution chart, and predictions CSV to the run directory.
 
 ```bash
-# evaluate a specific run by name
-uv run python src/evaluate.py run_025
+# evaluate the best model
+uv run python src/utils/evaluate.py run_069 --crop 420
 
 # evaluate multiple runs side by side
-uv run python src/evaluate.py run_025 run_043 run_045
+uv run python src/utils/evaluate.py run_025 run_069
 
 # evaluate a specific checkpoint file directly
-uv run python src/evaluate.py data/runs/convnext_small/run_025/best_model.pt
+uv run python src/utils/evaluate.py data/runs/convnext_small/run_069/best_model.pt --crop 420
 ```
 
-Pass a run name (`run_NNN`) and it resolves `data/runs/convnext_small/<run>/best_model.pt` automatically.
+Pass a run name (`run_NNN`) and it resolves `data/runs/convnext_small/<run>/best_model.pt` automatically. Use `--crop` to match the crop size the model was trained with (default: 224).
 
-## Dataset stats
+## Utils
+
+### Error distribution
+
+Plots the error distribution for a run on the val set.
 
 ```bash
-# compute normalisation stats over segmented training images
-uv run python src/compute_dataset_stats.py
+uv run python src/utils/plot_error_distribution.py --model convnext_small --run run_069
+```
 
-# compute over raw images
-uv run python src/compute_dataset_stats.py --raw
+### Conformal prediction
+
+Calibrates conformal intervals on val, evaluates on test, and produces coverage/width plots.
+
+```bash
+uv run python src/utils/plot_conformal.py --model convnext_small --run run_069
+uv run python src/utils/plot_conformal.py --model convnext_small --run run_069 --alpha 0.05  # 95% intervals
+```
+
+### Dataset stats
+
+Computes per-channel mean and std over the training set (used to set normalisation constants in `data_loader.py`). Only needs re-running if the dataset changes.
+
+```bash
+uv run python src/utils/compute_dataset_stats.py
+```
+
+### Texture analysis
+
+Compare spatial frequency content between real and synthetic images to diagnose domain gap:
+
+```bash
+uv run python src/utils/compare_texture_freq.py
+uv run python src/utils/centroid_correlation.py
 ```
 
 ## CUDA install
