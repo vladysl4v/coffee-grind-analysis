@@ -3,9 +3,10 @@ import torch
 import pandas as pd
 from PIL import Image
 from pathlib import Path
+from torchvision import transforms
 
 from src.models.convnext import get_convnext_small
-from src.data_loader import DEFAULT_EVAL_TRANSFORM
+from src.data_loader import DEFAULT_EVAL_TRANSFORM, _NORMALIZE
 
 
 DEVICE = torch.device(
@@ -14,13 +15,15 @@ DEVICE = torch.device(
     else "cpu"
 )
 
-MODEL_PATH = "data/runs/convnext_small/run_001/models/best_model.pt"
+MODEL1_PATH = "data/runs/convnext_small/run_001/models/best_model.pt"
+MODEL2_PATH = "data/runs/convnext_small/run_002/models/best_model.pt"
 
 LABEL_FILES = [
     "data/labels/train.csv",
     "data/labels/val.csv",
     "data/labels/test.csv",
 ]
+
 
 @st.cache_data
 def load_all_labels():
@@ -39,6 +42,7 @@ def load_all_labels():
 
     return pd.concat(dfs, ignore_index=True)
 
+
 labels_df = load_all_labels()
 
 
@@ -49,21 +53,33 @@ def get_actual_value(filename: str):
 
 
 @st.cache_resource
-def load_model():
+def load_model(model_path):
     model = get_convnext_small(freeze_backbone=False)
-    state = torch.load(MODEL_PATH, map_location=DEVICE)
+    state = torch.load(model_path, map_location=DEVICE)
     model.load_state_dict(state)
     model.to(DEVICE)
     model.eval()
     return model
 
-model = load_model()
 
-transform = DEFAULT_EVAL_TRANSFORM
+model1 = load_model(MODEL1_PATH)
+model2 = load_model(MODEL2_PATH)
+
+transform1 = DEFAULT_EVAL_TRANSFORM
+
+transform2 = transforms.Compose([
+    transforms.CenterCrop(420),
+    transforms.ToTensor(),
+    _NORMALIZE,
+])
+
 
 def init_state():
-    if "pred" not in st.session_state:
-        st.session_state.pred = None
+    if "pred1" not in st.session_state:
+        st.session_state.pred1 = None
+
+    if "pred2" not in st.session_state:
+        st.session_state.pred2 = None
 
     if "actual_input" not in st.session_state:
         st.session_state.actual_input = None
@@ -73,14 +89,15 @@ def init_state():
 
 
 def reset_state():
-    st.session_state.pred = None
+    st.session_state.pred1 = None
+    st.session_state.pred2 = None
     st.session_state.actual_input = None
 
 
 init_state()
 
 @torch.no_grad()
-def predict(image: Image.Image):
+def predict(model, transform, image: Image.Image):
     x = transform(image).unsqueeze(0).to(DEVICE)
     pred = model(x).squeeze().cpu().item()
     return float(pred) * 100
@@ -110,7 +127,7 @@ if uploaded_file:
 
     image = Image.open(uploaded_file).convert("RGB")
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns([1, 2])
 
     with col1:
         st.image(image, width=320)
@@ -122,17 +139,54 @@ if uploaded_file:
         st.write(f"**File:** {filename}")
 
         if st.button("Predict Fineness"):
-            st.session_state.pred = predict(image)
+            st.session_state.pred1 = predict(model1, transform1, image)
+            st.session_state.pred2 = predict(model2, transform2, image)
 
-        if st.session_state.pred is not None:
+        if st.session_state.pred1 is not None:
 
             st.subheader("Results")
 
-            st.metric("Predicted Fineness", f"{st.session_state.pred:.2f}")
+            model_col1, model_col2 = st.columns(2)
+
+            with model_col1:
+                st.markdown("### Model 1")
+                st.caption("Trained on usual dataset")
+                st.metric(
+                    "Predicted Fineness",
+                    f"{st.session_state.pred1:.2f}"
+                )
+
+            with model_col2:
+                st.markdown("### Model 2")
+                st.caption("Trained with synthetic data")
+                st.metric(
+                    "Predicted Fineness",
+                    f"{st.session_state.pred2:.2f}"
+                )
 
             if actual is not None:
+
+                st.subheader("Comparison")
+
                 st.metric("Actual Fineness", f"{actual:.2f}")
-                st.metric("Absolute Error", f"{abs(st.session_state.pred - actual):.2f}")
+
+                err_col1, err_col2 = st.columns(2)
+
+                err1 = abs(st.session_state.pred1 - actual)
+                err2 = abs(st.session_state.pred2 - actual)
+
+                with err_col1:
+                    st.metric("Model 1 Error", f"{err1:.2f}")
+
+                with err_col2:
+                    st.metric("Model 2 Error", f"{err2:.2f}")
+
+                if err1 < err2:
+                    st.success("Model 1 is closer to the actual value.")
+                elif err2 < err1:
+                    st.success("Model 2 is closer to the actual value.")
+                else:
+                    st.info("Both models have the same error.")
 
             else:
                 st.warning("No label found in dataset.")
@@ -145,29 +199,51 @@ if uploaded_file:
                     key=f"manual_{filename}"
                 )
 
-                if st.button("Compare"):
-                    pass  # value already stored
+                if st.session_state.actual_input is not None:
 
+                    actual_manual = st.session_state.actual_input
 
-            if st.session_state.actual_input is not None:
+                    st.subheader("Comparison")
 
-                st.success("Comparison")
+                    man_col1, man_col2 = st.columns(2)
 
-                st.metric("Manual Actual", f"{st.session_state.actual_input:.2f}")
-                st.metric(
-                    "Error",
-                    f"{abs(st.session_state.pred - st.session_state.actual_input):.2f}"
-                )
+                    with man_col1:
+                        st.metric(
+                            "Model 1 Error",
+                            f"{abs(st.session_state.pred1 - actual_manual):.2f}"
+                        )
 
-            progress = int(max(0, min(st.session_state.pred, 100)))
-            st.progress(progress)
+                    with man_col2:
+                        st.metric(
+                            "Model 2 Error",
+                            f"{abs(st.session_state.pred2 - actual_manual):.2f}"
+                        )
 
-            if st.session_state.pred < 30:
-                st.info("Coarse Grind")
-            elif st.session_state.pred < 70:
-                st.warning("☕ Medium Grind")
-            else:
-                st.success("Fine Grind")
+            st.subheader("Predicted Fineness")
+
+            prog_col1, prog_col2 = st.columns(2)
+
+            with prog_col1:
+                st.write("Model 1")
+                st.progress(int(max(0, min(st.session_state.pred1, 100))))
+
+                if st.session_state.pred1 < 30:
+                    st.info("Coarse Grind")
+                elif st.session_state.pred1 < 70:
+                    st.warning("Medium Grind")
+                else:
+                    st.success("Fine Grind")
+
+            with prog_col2:
+                st.write("Model 2")
+                st.progress(int(max(0, min(st.session_state.pred2, 100))))
+
+                if st.session_state.pred2 < 30:
+                    st.info("Coarse Grind")
+                elif st.session_state.pred2 < 70:
+                    st.warning("Medium Grind")
+                else:
+                    st.success("Fine Grind")
 
 else:
     st.info("Upload an image to start prediction.")
