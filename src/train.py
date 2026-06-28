@@ -20,9 +20,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+from torch.utils.data import DataLoader, ConcatDataset
 from data_loader import (
     get_loaders, get_numerical_feature_loaders,
-    DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, _NORMALIZE,
+    DEFAULT_TRAIN_TRANSFORM, DEFAULT_EVAL_TRANSFORM, DEFAULT_FEATURE_MODEL_TRANSFORM, _NORMALIZE,
+    SyntheticDataset, SyntheticNumericalDataset, load_synthetic_split,
 )
 from augmentation import ApplyAugmentation, seed_worker
 from torchvision import transforms as T
@@ -51,6 +53,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -60,6 +63,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -69,6 +73,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -78,6 +83,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -87,6 +93,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -96,6 +103,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -105,6 +113,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -114,6 +123,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -123,6 +133,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -132,6 +143,7 @@ MODEL_CONFIGS = {
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             train_transform=args.train_transform,
+            eval_transform=args.eval_transform,
             worker_init_fn=seed_worker if args.online_augment else None,
         ),
     },
@@ -223,6 +235,16 @@ def parse_args():
                         help="Huber loss delta threshold (default: 0.1)")
     parser.add_argument("--early-stop-patience", type=int, default=20, metavar="N",
                         help="stop training if val MAE does not improve for N epochs (default: 20, 0 = disabled)")
+    parser.add_argument("--synthetic", action="store_true",
+                        help="mix synthetic images from data/images/synthetic/ into training")
+    parser.add_argument("--synth-val-frac", type=float, default=0.1, metavar="F",
+                        help="fraction of synthetic data held out for val (default: 0.1)")
+    parser.add_argument("--real-only-after-unfreeze", action="store_true",
+                        help="drop synthetic data from training when backbone unfreezes (requires --unfreeze-after)")
+    parser.add_argument("--synth-limit", type=int, default=None, metavar="N",
+                        help="cap the number of synthetic training images used (default: all)")
+    parser.add_argument("--crop", type=int, default=224, metavar="PX",
+                        help="centre-crop size in pixels (default: 224)")
     return parser.parse_args()
 
 
@@ -230,8 +252,9 @@ def main():
     args = parse_args()
 
     base_dir = _ROOT / "data" / "runs" / args.model
-    run_id = len(sorted(base_dir.glob("run_*"))) + 1
-    run_dir = base_dir / f"run_{run_id:03d}"
+    existing = sorted(base_dir.glob("run_*"))
+    run_id   = int(existing[-1].name.split("_")[1]) + 1 if existing else 1
+    run_dir  = base_dir / f"run_{run_id:03d}"
     models_dir = run_dir / "models"
     graphs_dir = run_dir / "graphs"
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -242,21 +265,69 @@ def main():
         torch.backends.cudnn.benchmark = True
     print(f"Model: {args.model} | Device: {device} | Run: {run_dir.name}")
 
+    eval_transform = T.Compose([T.CenterCrop(args.crop), T.ToTensor(), _NORMALIZE])
     if args.online_augment:
         train_transform = T.Compose([
             ApplyAugmentation(),
-            T.CenterCrop(224),
+            T.CenterCrop(args.crop),
             T.ToTensor(),
             _NORMALIZE,
         ])
+    elif args.crop != 224:
+        train_transform = T.Compose([T.CenterCrop(args.crop), T.ToTensor(), _NORMALIZE])
     else:
         train_transform = DEFAULT_TRAIN_TRANSFORM
 
     args.train_transform = train_transform
+    args.eval_transform  = eval_transform
     train_loader, val_loader, _ = MODEL_CONFIGS[args.model]["loaders"](args)
 
     if args.unfreeze_after is not None:
         args.unfreeze = False
+
+    synth_val_loader  = None
+    real_train_loader = train_loader
+    if args.synthetic:
+        synth_train_samples, synth_val_samples = load_synthetic_split(args.synth_val_frac)
+        if args.synth_limit is not None:
+            synth_train_samples = synth_train_samples[:args.synth_limit]
+        _lkw = dict(
+            num_workers=args.num_workers,
+            pin_memory=True,
+            persistent_workers=args.num_workers > 0,
+            prefetch_factor=4 if args.num_workers > 0 else None,
+            multiprocessing_context="spawn" if args.num_workers > 0 else None,
+        )
+        is_numerical = args.model.startswith("numerical_features")
+        if is_numerical:
+            ds = train_loader.dataset
+            synth_train_ds = SyntheticNumericalDataset(
+                synth_train_samples,
+                image_mode=ds.image_mode,
+                transform=train_transform,
+                feature_mean=ds.feature_mean,
+                feature_std=ds.feature_std,
+            )
+            synth_val_ds = SyntheticNumericalDataset(
+                synth_val_samples,
+                image_mode=ds.image_mode,
+                transform=DEFAULT_FEATURE_MODEL_TRANSFORM,
+                feature_mean=ds.feature_mean,
+                feature_std=ds.feature_std,
+            )
+        else:
+            synth_train_ds = SyntheticDataset(synth_train_samples, transform=train_transform)
+            synth_val_ds   = SyntheticDataset(synth_val_samples,   transform=eval_transform)
+
+        mixed_ds     = ConcatDataset([train_loader.dataset, synth_train_ds])
+        worker_fn    = seed_worker if args.online_augment else None
+        train_loader = DataLoader(mixed_ds, batch_size=args.batch_size, shuffle=True,
+                                  worker_init_fn=worker_fn, **_lkw)
+        synth_val_loader = DataLoader(synth_val_ds, batch_size=args.batch_size, shuffle=False, **_lkw)
+        print(f"Real: {len(real_train_loader.dataset)} train + {len(val_loader.dataset)} val  "
+              f"Synth: {len(synth_train_samples)} train + {len(synth_val_samples)} val  "
+              f"| total train samples: {len(mixed_ds)}")
+
     model = MODEL_CONFIGS[args.model]["builder"](args).to(device)
     criterion = nn.HuberLoss(delta=args.huber_delta) if args.huber else nn.MSELoss()
     optimizer = (optim.AdamW if args.adamw else optim.Adam)(
@@ -271,6 +342,7 @@ def main():
 
     train_mse, val_mse = [], []
     train_mae, val_mae = [], []
+    synth_val_mse, synth_val_mae = [], []
     best_val_mae = float("inf")
     early_stop_counter = 0
 
@@ -293,6 +365,11 @@ def main():
         "early_stop_patience": args.early_stop_patience,
         "num_workers": args.num_workers,
         "device": device.type,
+        "synthetic": args.synthetic,
+        "synth_val_frac": args.synth_val_frac if args.synthetic else None,
+        "synth_limit": args.synth_limit if args.synthetic else None,
+        "real_only_after_unfreeze": args.real_only_after_unfreeze if args.synthetic else None,
+        "crop": args.crop,
     }
     with open(run_dir / "config.json", "w") as f:
         json.dump(config, f, indent=2)
@@ -300,7 +377,13 @@ def main():
     metrics_path = run_dir / "metrics.csv"
     loss_col = "huber" if args.huber else "mse"
     with open(metrics_path, "w", newline="") as f:
-        csv.writer(f).writerow(["epoch", f"train_{loss_col}", "train_mae", f"val_{loss_col}", "val_mae"])
+        if args.synthetic:
+            header = ["epoch", f"train_{loss_col}", "train_mae",
+                      f"val_real_{loss_col}", "val_real_mae",
+                      f"val_synth_{loss_col}", "val_synth_mae"]
+        else:
+            header = ["epoch", f"train_{loss_col}", "train_mae", f"val_{loss_col}", "val_mae"]
+        csv.writer(f).writerow(header)
 
     for epoch in range(1, args.epochs + 1):
         if args.unfreeze_after is not None and epoch == args.unfreeze_after + 1:
@@ -313,7 +396,11 @@ def main():
                 if args.cosine_lr else
                 optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
             )
-            print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
+            if args.synthetic and args.real_only_after_unfreeze:
+                train_loader = real_train_loader
+                print(f"Epoch {epoch}: backbone unfrozen, switched to real-only training, lr → {args.lr / 10:.2e}")
+            else:
+                print(f"Epoch {epoch}: backbone unfrozen, lr → {args.lr / 10:.2e}")
 
         model.train()
         acc_mse = torch.zeros(1, device=device)
@@ -360,6 +447,19 @@ def main():
         val_mse.append((acc_mse / len(val_loader)).item())
         val_mae.append((acc_mae / len(val_loader)).item())
 
+        if synth_val_loader is not None:
+            s_acc_mse = torch.zeros(1, device=device)
+            s_acc_mae = torch.zeros(1, device=device)
+            with torch.no_grad():
+                for batch in synth_val_loader:
+                    images, features, labels = _move_batch_to_device(batch, device)
+                    with autocast(device_type=device.type):
+                        preds = _forward_batch(model, images, features).view(-1)
+                        s_acc_mse += criterion(preds, labels)
+                    s_acc_mae += (preds - labels).abs().mean()
+            synth_val_mse.append((s_acc_mse / len(synth_val_loader)).item())
+            synth_val_mae.append((s_acc_mae / len(synth_val_loader)).item())
+
         scheduler.step() if args.cosine_lr else scheduler.step(val_mse[-1])
 
         if val_mae[-1] < best_val_mae:
@@ -369,22 +469,31 @@ def main():
         else:
             early_stop_counter += 1
 
-        print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={optimizer.param_groups[0]['lr']:.2e}")
+        lrs = "/".join(f"{pg['lr']:.2e}" for pg in optimizer.param_groups)
+        if args.synthetic:
+            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val_real {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | val_synth mae={synth_val_mae[-1]*100:.2f} | lr={lrs}")
+        else:
+            print(f"Epoch {epoch}/{args.epochs} | train {loss_col}={train_mse[-1]*10000:.2f} mae={train_mae[-1]*100:.2f} | val {loss_col}={val_mse[-1]*10000:.2f} mae={val_mae[-1]*100:.2f} | lr={lrs}")
 
         if args.early_stop_patience > 0 and early_stop_counter >= args.early_stop_patience:
             print(f"Early stopping at epoch {epoch}: val MAE did not improve for {args.early_stop_patience} epochs (best={best_val_mae*100:.2f}).")
             break
 
         with open(metrics_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]])
+            row = [epoch, train_mse[-1], train_mae[-1], val_mse[-1], val_mae[-1]]
+            if args.synthetic:
+                row += [synth_val_mse[-1], synth_val_mae[-1]]
+            csv.writer(f).writerow(row)
 
         loss_label = f"Huber Loss (δ={args.huber_delta})" if args.huber else "MSE Loss"
-        _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png")
-        _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png")
+        _save_plot([x * 10000 for x in train_mse], [x * 10000 for x in val_mse], loss_label, graphs_dir / "loss.png",
+                   extra=[x * 10000 for x in synth_val_mse] if args.synthetic else None, extra_label="val_synth")
+        _save_plot([x * 100 for x in train_mae], [x * 100 for x in val_mae], "MAE", graphs_dir / "mae.png",
+                   extra=[x * 100 for x in synth_val_mae] if args.synthetic else None, extra_label="val_synth")
 
         if epoch % 5 == 0:
             torch.save(model.state_dict(), models_dir / f"epoch_{epoch:03d}.pt")
-            _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir)
+            _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir, synth_loader=synth_val_loader)
 
 
 def _move_batch_to_device(batch, device):
@@ -423,10 +532,12 @@ def _fgsm_perturb(images, features, labels, model, criterion, epsilon, device):
     return perturbed.detach()
 
 
-def _save_plot(train_vals, val_vals, title, path):
+def _save_plot(train_vals, val_vals, title, path, extra=None, extra_label=None):
     plt.figure()
     plt.plot(train_vals, label="train")
-    plt.plot(val_vals, label="val")
+    plt.plot(val_vals, label="val_real" if extra is not None else "val")
+    if extra is not None:
+        plt.plot(extra, label=extra_label or "val_synth", linestyle="--")
     plt.legend()
     plt.title(title)
     plt.tight_layout()
@@ -434,26 +545,41 @@ def _save_plot(train_vals, val_vals, title, path):
     plt.close()
 
 
-def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir):
+def _save_scatter(model, val_loader, device, epoch, graphs_dir, run_dir, synth_loader=None):
     model.eval()
-    preds_list, gt_list = [], []
-    with torch.no_grad():
-        for batch in val_loader:
-            images, features, labels = _move_batch_to_device(batch, device)
-            preds_list.append(_forward_batch(model, images, features).view(-1).cpu().numpy())
-            gt_list.append(labels.cpu().numpy())
 
-    preds = np.concatenate(preds_list) * 100
-    gt    = np.concatenate(gt_list) * 100
-    mse   = np.mean((preds - gt) ** 2)
+    def _collect(loader):
+        preds_list, gt_list = [], []
+        with torch.no_grad():
+            for batch in loader:
+                images, features, labels = _move_batch_to_device(batch, device)
+                preds_list.append(_forward_batch(model, images, features).view(-1).cpu().numpy())
+                gt_list.append(labels.cpu().numpy())
+        return np.concatenate(preds_list) * 100, np.concatenate(gt_list) * 100
+
+    r_preds, r_gt = _collect(val_loader)
+    mse = np.mean((r_preds - r_gt) ** 2)
+
+    s_preds, s_gt = (None, None)
+    if synth_loader is not None:
+        s_preds, s_gt = _collect(synth_loader)
 
     with open(run_dir / f"predictions_epoch_{epoch:03d}.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["ground_truth", "predicted"])
-        w.writerows(zip(gt.tolist(), preds.tolist()))
+        if s_preds is not None:
+            w.writerow(["ground_truth", "predicted", "source"])
+            w.writerows([(gt, p, "real")  for gt, p in zip(r_gt.tolist(), r_preds.tolist())])
+            w.writerows([(gt, p, "synth") for gt, p in zip(s_gt.tolist(), s_preds.tolist())])
+        else:
+            w.writerow(["ground_truth", "predicted"])
+            w.writerows(zip(r_gt.tolist(), r_preds.tolist()))
 
     plt.figure()
-    plt.scatter(gt, preds, alpha=0.5)
+    plt.scatter(r_gt, r_preds, alpha=0.5, label="real", color="saddlebrown", s=30)
+    if s_preds is not None:
+        plt.scatter(s_gt, s_preds, alpha=0.5, label="synth", color="steelblue", s=30, marker="^")
+        plt.legend()
+    plt.plot([0, 100], [0, 100], "k--", lw=1)
     plt.xlabel("Ground Truth")
     plt.ylabel("Prediction")
     plt.title(f"GT vs Pred (epoch {epoch})")
